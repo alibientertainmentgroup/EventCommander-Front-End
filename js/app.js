@@ -1294,18 +1294,6 @@ async function signOutInprocessing() {
     }
 }
 
-async function updateRosterEntry(entry) {
-    if (isMockMode()) {
-        const store = getMockStore();
-        const idx = store.roster.findIndex(r => r.id === entry.id);
-        if (idx === -1) throw new Error('Roster entry not found');
-        store.roster[idx] = { ...store.roster[idx], ...entry };
-        setMockStore(store);
-        return store.roster[idx];
-    }
-    return null;
-}
-
 const INPROCESSING_SHEET_URL = 'https://docs.google.com/spreadsheets/d/1-3BS4c_szG5YzRDNpZrHe0c7fL7hzEWy/export?format=xlsx';
 let inprocessingCache = null;
 
