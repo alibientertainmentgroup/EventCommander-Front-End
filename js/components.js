@@ -377,7 +377,7 @@ function renderRoster(roster) {
                 <tbody>
                     ${sorted.length ? sorted.map(r => `
                         <tr class="roster-line" onclick="openRosterProfile('${r.id}')">
-                            <td>${r.lastName ? `${r.lastName}${r.firstName ? `, ${r.firstName}` : ''}` : (r.name || 'Unknown')}</td>
+                            <td>${r.lastName ? `${r.lastName}${r.firstName ? ` ${r.firstName}` : ''}` : (r.name || 'Unknown')}</td>
                             <td>${r.rank || 'â€”'}</td>
                             <td>${r.capId || r.cap_id || 'N/A'}</td>
                             <td>${formatSignedIn(r.signed_in_at)}</td>
@@ -1176,7 +1176,7 @@ function renderLog() {
             <div class="resource-list">
                 ${logs.length ? logs.map(entry => {
                     const isAudit = entry.type === 'audit';
-                    const name = entry.lastName ? `${entry.lastName}, ${entry.firstName || ''}` : (entry.name || 'Unknown');
+                    const name = entry.lastName ? `${entry.lastName}${entry.firstName ? ` ${entry.firstName}` : ''}` : (entry.name || 'Unknown');
                     const header = isAudit
                         ? `AUDIT • ${entry.action || 'update'} • ${entry.entity_type || 'unknown'}${entry.entity_name ? ` • ${entry.entity_name}` : ''}`
                         : `${name} • CAP ${entry.cap_id || 'N/A'} • ${entry.rank || '—'}`;
