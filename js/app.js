@@ -2723,6 +2723,11 @@ async function saveActivityDetails(activityId) {
     try {
         await updateActivity(activityId, updates);
         await loadAllData();
+        if (appState.selectedEvent && appState.selectedEvent.id) {
+            await selectEvent(appState.selectedEvent.id, 'events');
+        } else {
+            renderCurrentView();
+        }
         closeModal();
     } catch (error) {
         console.error('Failed to update activity:', error);
