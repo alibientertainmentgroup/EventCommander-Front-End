@@ -13,6 +13,7 @@ let appState = {
     logs: [],
     supportTickets: [],
     selectedEvent: null,
+    sandboxMode: false,
     dashboardDate: null,
     reportView: null,
     timelineDate: null,
@@ -45,10 +46,17 @@ function getSupportRoles() {
     return Array.from(new Set(normalized));
 }
 
+function renderSandboxBanner() {
+    return appState.sandboxMode
+        ? '<div class="sandbox-banner">SANDBOX MODE</div>'
+        : '';
+}
+
 // ==================== INITIALIZATION ====================
 
 document.addEventListener('DOMContentLoaded', async () => {
     console.log('🚀 CAP Event System starting...');
+    appState.sandboxMode = localStorage.getItem('cap-event-sandbox-mode') === 'true';
     
     // Initialize Supabase
     if (!initSupabase()) {
@@ -190,16 +198,20 @@ async function loadAllData() {
             getSupportTickets()
         ]);
         
-        appState.events = events;
-        appState.activities = activities;
-        appState.assets = assets;
-        appState.personnel = personnel;
-        appState.locations = locations;
-        appState.roster = roster;
+        // Ensure sandbox filter is applied client-side even if backend returns mixed data.
+        const sandboxFlag = localStorage.getItem('cap-event-sandbox-mode') === 'true';
+        const filterSandbox = (records) => (records || []).filter(r => !!r.sandbox_mode === sandboxFlag);
+
+        appState.events = filterSandbox(events);
+        appState.activities = filterSandbox(activities);
+        appState.assets = filterSandbox(assets);
+        appState.personnel = filterSandbox(personnel);
+        appState.locations = filterSandbox(locations);
+        appState.roster = filterSandbox(roster);
         appState.roles = roles;
         appState.users = users;
-        appState.logs = logs;
-        appState.supportTickets = supportTickets;
+        appState.logs = filterSandbox(logs);
+        appState.supportTickets = filterSandbox(supportTickets);
 
         if (isPrivileged()) {
             await syncAllDriversForActivities();
@@ -270,9 +282,12 @@ async function autoPromoteReady() {
 
 function renderCurrentView() {
     const contentArea = document.getElementById('contentArea');
+    let viewHtml = '';
+    let postRender = null;
 
     if (isPrivileged() && !appState.selectedEvent) {
-        contentArea.innerHTML = renderAdminHome(appState.events);
+        viewHtml = renderAdminHome(appState.events);
+        contentArea.innerHTML = renderSandboxBanner() + viewHtml;
         return;
     }
     
@@ -280,72 +295,74 @@ function renderCurrentView() {
         case 'dashboard':
             if (appState.selectedEvent) {
                 const eventActivities = appState.activities.filter(a => a.event_id === appState.selectedEvent.id);
-                contentArea.innerHTML = renderEventDashboard(
+                viewHtml = renderEventDashboard(
                     appState.selectedEvent,
                     eventActivities,
                     appState.assets,
                     appState.personnel
                 );
             } else {
-                contentArea.innerHTML = renderDashboard(appState.events, appState.personnel, appState.assets);
+                viewHtml = renderDashboard(appState.events, appState.personnel, appState.assets);
             }
             break;
         case 'events':
             if (appState.selectedEvent) {
                 const eventActivities = appState.activities.filter(a => a.event_id === appState.selectedEvent.id);
-                contentArea.innerHTML = renderEventDetailView(appState.selectedEvent, eventActivities);
-                setupKanbanDragAndDrop();
+                viewHtml = renderEventDetailView(appState.selectedEvent, eventActivities);
+                postRender = () => setupKanbanDragAndDrop();
             } else {
-                contentArea.innerHTML = renderEvents(appState.events);
+                viewHtml = renderEvents(appState.events);
             }
             break;
         case 'inprocessing':
-            contentArea.innerHTML = renderInprocessing();
+            viewHtml = renderInprocessing();
             break;
         case 'outprocessing':
-            contentArea.innerHTML = renderOutprocessing();
+            viewHtml = renderOutprocessing();
             break;
         case 'assets':
             if (appState.selectedEvent) {
                 const eventActivities = appState.activities.filter(a => a.event_id === appState.selectedEvent.id);
-                contentArea.innerHTML = renderAssets(appState.assets, eventActivities, appState.timelineDate);
+                viewHtml = renderAssets(appState.assets, eventActivities, appState.timelineDate);
             } else {
-                contentArea.innerHTML = renderAssets(appState.assets, appState.activities, appState.timelineDate);
+                viewHtml = renderAssets(appState.assets, appState.activities, appState.timelineDate);
             }
             break;
         case 'personnel':
             if (appState.selectedEvent) {
                 const eventActivities = appState.activities.filter(a => a.event_id === appState.selectedEvent.id);
-                contentArea.innerHTML = renderPersonnel(appState.personnel, eventActivities, appState.timelineDate);
+                viewHtml = renderPersonnel(appState.personnel, eventActivities, appState.timelineDate);
             } else {
-                contentArea.innerHTML = renderPersonnel(appState.personnel, appState.activities, appState.timelineDate);
+                viewHtml = renderPersonnel(appState.personnel, appState.activities, appState.timelineDate);
             }
             break;
         case 'roster':
-            contentArea.innerHTML = renderRoster(appState.roster);
+            viewHtml = renderRoster(appState.roster);
             break;
         case 'locations':
-            contentArea.innerHTML = renderLocations(appState.locations);
+            viewHtml = renderLocations(appState.locations);
             break;
         case 'schedule':
-            contentArea.innerHTML = renderSchedule(getUserSchedule());
+            viewHtml = renderSchedule(getUserSchedule());
             break;
         case 'reports':
-            contentArea.innerHTML = isPrivileged() ? renderReports() : renderNotAuthorized();
+            viewHtml = isPrivileged() ? renderReports() : renderNotAuthorized();
             break;
         case 'communications':
-            contentArea.innerHTML = isPrivileged() ? renderCommunications() : renderNotAuthorized();
+            viewHtml = isPrivileged() ? renderCommunications() : renderNotAuthorized();
             break;
         case 'support':
-            contentArea.innerHTML = isPrivileged() ? renderSupportTicket() : renderNotAuthorized();
+            viewHtml = isPrivileged() ? renderSupportTicket() : renderNotAuthorized();
             break;
         case 'log':
-            contentArea.innerHTML = isPrivileged() ? renderLog() : renderNotAuthorized();
+            viewHtml = isPrivileged() ? renderLog() : renderNotAuthorized();
             break;
         case 'admin':
-            contentArea.innerHTML = isAdmin() ? renderAdminPanel() : renderNotAuthorized();
+            viewHtml = isAdmin() ? renderAdminPanel() : renderNotAuthorized();
             break;
     }
+    contentArea.innerHTML = renderSandboxBanner() + viewHtml;
+    if (postRender) postRender();
 }
 
 async function switchView(viewName) {
@@ -400,6 +417,27 @@ function setRosterSearch(value) {
 function setReportView(name) {
     appState.reportView = name;
     renderCurrentView();
+}
+
+async function toggleSandboxMode() {
+    appState.sandboxMode = !appState.sandboxMode;
+    localStorage.setItem('cap-event-sandbox-mode', appState.sandboxMode ? 'true' : 'false');
+    showLoading();
+    try {
+        await loadAllData();
+        if (appState.selectedEvent) {
+            const stillExists = appState.events.some(e => e.id === appState.selectedEvent.id);
+            if (!stillExists) {
+                appState.selectedEvent = null;
+            }
+        }
+        renderCurrentView();
+        updateContextUI();
+    } catch (error) {
+        console.error('Failed to toggle sandbox mode:', error);
+    } finally {
+        hideLoading();
+    }
 }
 
 async function addSupportTicketAction() {
@@ -1524,6 +1562,13 @@ function openEventModal(eventId = null) {
                 <label class="form-label">End Date</label>
                 <input type="date" class="form-input" id="eventEndDate" value="${endDate}">
             </div>
+            <div class="form-row">
+                <label class="form-label">Sandbox Mode</label>
+                <label class="toggle-row">
+                    <input type="checkbox" id="eventSandboxMode" ${event && event.sandbox_mode ? 'checked' : ''}>
+                    <span class="toggle-label">Enable sandbox mode for this event</span>
+                </label>
+            </div>
         </form>
     `;
 
@@ -1545,6 +1590,7 @@ async function saveEvent(e, eventId) {
         description: document.getElementById('eventDescription').value,
         start_date: startDateValue || null,
         end_date: endDateValue || null,
+        sandbox_mode: document.getElementById('eventSandboxMode').checked,
         personnel_needed: event && event.personnel_needed ? event.personnel_needed : 0,
         assets_needed: event && event.assets_needed ? event.assets_needed : 0
     };
