@@ -970,6 +970,12 @@ function lookupInprocessingCadet() {
             appState.inprocessProfile = match;
             appState.inprocessMessage = '';
             appState.inprocessStation = null;
+            if (appState.selectedEvent) {
+                return getRoster(appState.selectedEvent.id).then(roster => {
+                    appState.roster = roster;
+                    renderCurrentView();
+                });
+            }
             renderCurrentView();
         })
         .catch(err => {
