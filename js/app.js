@@ -103,6 +103,9 @@ async function handleLogin(e) {
     
     try {
         const user = await loginUser(capId);
+        // Start each session with sandbox off
+        appState.sandboxMode = false;
+        localStorage.setItem('cap-event-sandbox-mode', 'false');
         localStorage.setItem('cap-event-current-cap-id', capId);
         
         // Update UI

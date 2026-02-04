@@ -1,12 +1,28 @@
-// supabaseClient Client and Database Functions
+﻿// supabaseClient Client and Database Functions
 
 let supabaseClient;
 let currentUser = null;
 
-const MOCK_STORAGE_KEY = 'cap-event-system-mock-v1';
+const MOCK_STORAGE_KEY_BASE = 'cap-event-system-mock-v1';
+
+function isSandboxModeEnabled() {
+    try {
+        return localStorage.getItem('cap-event-sandbox-mode') === 'true';
+    } catch {
+        return false;
+    }
+}
+
+function getMockStorageKey() {
+    return `${MOCK_STORAGE_KEY_BASE}${isSandboxModeEnabled() ? '-sandbox' : ''}`;
+}
 
 function isMockMode() {
     return SUPABASE_CONFIG && SUPABASE_CONFIG.mockMode === true;
+}
+
+function currentSandboxFlag() {
+    return isSandboxModeEnabled();
 }
 
 function makeId() {
@@ -16,6 +32,10 @@ function makeId() {
     return `mock-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
+function filterBySandbox(records) {
+    const flag = currentSandboxFlag();
+    return (records || []).filter(r => !!r.sandbox_mode === flag);
+}
 function getMockStore() {
     const baseRoles = [
         'Driver',
@@ -40,7 +60,7 @@ function getMockStore() {
     };
 
     try {
-        const raw = localStorage.getItem(MOCK_STORAGE_KEY);
+        const raw = localStorage.getItem(getMockStorageKey());
         if (!raw) return empty;
         const data = JSON.parse(raw);
         return {
@@ -61,7 +81,7 @@ function getMockStore() {
 }
 
 function setMockStore(store) {
-    localStorage.setItem(MOCK_STORAGE_KEY, JSON.stringify(store));
+    localStorage.setItem(getMockStorageKey(), JSON.stringify(store));
 }
 
 function seedMockData(options = {}) {
@@ -164,7 +184,8 @@ function seedMockData(options = {}) {
             specialties: '',
             status: 'available',
             assigned_to: null,
-            availability
+            availability,
+            sandbox_mode: currentSandboxFlag()
         });
     }
 
@@ -189,7 +210,8 @@ function seedMockData(options = {}) {
             status: 'available',
             assigned_to: null,
             assigned_personnel: [],
-            availability
+            availability,
+            sandbox_mode: currentSandboxFlag()
         });
     }
 
@@ -254,7 +276,8 @@ function seedMockActivities(options = {}) {
                 start_time: startTime,
                 end_time: endTime(startTime),
                 support_personnel_required: [],
-                assets_required: []
+                assets_required: [],
+                sandbox_mode: currentSandboxFlag()
             });
         });
     }
@@ -267,14 +290,14 @@ function seedMockActivities(options = {}) {
 function initSupabase() {
     try {
         if (isMockMode()) {
-            console.log('✅ Mock mode enabled (no supabaseClient)');
+            console.log('âœ… Mock mode enabled (no supabaseClient)');
             return true;
         }
         supabaseClient = window.supabase.createClient(SUPABASE_CONFIG.url, SUPABASE_CONFIG.anonKey);
-        console.log('✅ supabaseClient initialized');
+        console.log('âœ… supabaseClient initialized');
         return true;
     } catch (error) {
-        console.error('❌ supabaseClient initialization failed:', error);
+        console.error('âŒ supabaseClient initialization failed:', error);
         alert('Failed to connect to database. Please check your config.js file.');
         return false;
     }
@@ -359,6 +382,9 @@ function isPrivileged() {
 
 function logoutUser() {
     currentUser = null;
+    try {
+        localStorage.setItem('cap-event-sandbox-mode', 'false');
+    } catch {}
 }
 
 // ==================== EVENT FUNCTIONS ====================
@@ -367,10 +393,11 @@ async function getEvents() {
     try {
         if (isMockMode()) {
             const store = getMockStore();
-            const data = [...store.events].sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
+            const data = [...store.events].sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""));
+            const sandboxed = filterBySandbox(data);
 
-            if (isPrivileged()) return data;
-            return data.filter(event =>
+            if (isPrivileged()) return sandboxed;
+            return sandboxed.filter(event =>
                 event.created_by === currentUser.cap_id ||
                 (event.assigned_personnel && event.assigned_personnel.includes(currentUser.cap_id))
             );
@@ -378,6 +405,7 @@ async function getEvents() {
         const { data, error } = await supabaseClient
             .from('events')
             .select('*')
+            .eq('sandbox_mode', currentSandboxFlag())
             .order('created_at', { ascending: false });
 
         if (error) throw error;
@@ -429,7 +457,8 @@ async function createEvent(eventData) {
                 created_at: new Date().toISOString(),
                 status: eventData.status || 'upcoming',
                 assigned_personnel: eventData.assigned_personnel || [],
-                assigned_assets: eventData.assigned_assets || []
+                assigned_assets: eventData.assigned_assets || [],
+                sandbox_mode: currentSandboxFlag()
             };
             store.events.push(record);
             setMockStore(store);
@@ -450,7 +479,8 @@ async function createEvent(eventData) {
                 created_at: new Date().toISOString(),
                 status: eventData.status || 'upcoming',
                 assigned_personnel: eventData.assigned_personnel || [],
-                assigned_assets: eventData.assigned_assets || []
+                assigned_assets: eventData.assigned_assets || [],
+                sandbox_mode: currentSandboxFlag()
             }])
             .select()
             .single();
@@ -541,12 +571,13 @@ async function getActivities(eventId = null) {
         if (isMockMode()) {
             const store = getMockStore();
             let data = [...store.activities];
+            data = filterBySandbox(data);
             if (eventId) {
                 data = data.filter(a => a.event_id === eventId);
             }
-            return data.sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
+            return data.sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""));
         }
-        let query = supabaseClient.from('activities').select('*');
+        let query = supabaseClient.from('activities').select('*').eq('sandbox_mode', currentSandboxFlag());
         
         if (eventId) {
             query = query.eq('event_id', eventId);
@@ -572,7 +603,8 @@ async function createActivity(activityData) {
                 created_at: new Date().toISOString(),
                 column: activityData.column || 'Planning',
                 assigned_personnel: activityData.assigned_personnel || [],
-                assigned_assets: activityData.assigned_assets || []
+                assigned_assets: activityData.assigned_assets || [],
+                sandbox_mode: currentSandboxFlag()
             };
             store.activities.push(record);
             setMockStore(store);
@@ -592,7 +624,8 @@ async function createActivity(activityData) {
                 created_at: new Date().toISOString(),
                 column: activityData.column || 'Planning',
                 assigned_personnel: activityData.assigned_personnel || [],
-                assigned_assets: activityData.assigned_assets || []
+                assigned_assets: activityData.assigned_assets || [],
+                sandbox_mode: currentSandboxFlag()
             }])
             .select()
             .single();
@@ -673,11 +706,13 @@ async function getAssets() {
     try {
         if (isMockMode()) {
             const store = getMockStore();
-            return [...store.assets].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+            const data = filterBySandbox(store.assets);
+            return [...data].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
         }
         const { data, error } = await supabaseClient
             .from('assets')
             .select('*')
+            .eq('sandbox_mode', currentSandboxFlag())
             .order('name', { ascending: true });
 
         if (error) throw error;
@@ -697,7 +732,8 @@ async function createAsset(assetData) {
                 ...assetData,
                 status: 'available',
                 assigned_to: null,
-                assigned_personnel: assetData.assigned_personnel || []
+                assigned_personnel: assetData.assigned_personnel || [],
+                sandbox_mode: currentSandboxFlag()
             };
             store.assets.push(record);
             setMockStore(store);
@@ -716,7 +752,8 @@ async function createAsset(assetData) {
                 ...assetData,
                 status: 'available',
                 assigned_to: null,
-                assigned_personnel: assetData.assigned_personnel || []
+                assigned_personnel: assetData.assigned_personnel || [],
+                sandbox_mode: currentSandboxFlag()
             }])
             .select()
             .single();
@@ -797,11 +834,13 @@ async function getPersonnel() {
     try {
         if (isMockMode()) {
             const store = getMockStore();
-            return [...store.personnel].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+            const data = filterBySandbox(store.personnel);
+            return [...data].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
         }
         const { data, error } = await supabaseClient
             .from('personnel')
             .select('*')
+            .eq('sandbox_mode', currentSandboxFlag())
             .order('name', { ascending: true });
 
         if (error) throw error;
@@ -820,7 +859,8 @@ async function createPersonnel(personnelData) {
                 id: makeId(),
                 ...personnelData,
                 status: 'available',
-                assigned_to: null
+                assigned_to: null,
+                sandbox_mode: currentSandboxFlag()
             };
             store.personnel.push(record);
             setMockStore(store);
@@ -838,7 +878,8 @@ async function createPersonnel(personnelData) {
             .insert([{
                 ...personnelData,
                 status: 'available',
-                assigned_to: null
+                assigned_to: null,
+                sandbox_mode: currentSandboxFlag()
             }])
             .select()
             .single();
@@ -919,11 +960,12 @@ async function getLocations() {
     try {
         if (isMockMode()) {
             const store = getMockStore();
-            return [...store.locations];
+            return filterBySandbox(store.locations);
         }
         const { data, error } = await supabaseClient
             .from('locations')
             .select('*')
+            .eq('sandbox_mode', currentSandboxFlag())
             .order('name', { ascending: true });
         if (error) throw error;
         return data || [];
@@ -939,13 +981,19 @@ async function getRoster(eventId = null) {
     try {
         if (isMockMode()) {
             const store = getMockStore();
-            let data = [...store.roster];
+            let data = filterBySandbox(store.roster);
             if (eventId) {
                 data = data.filter(r => r.event_id === eventId);
             }
             return data.sort((a, b) => (a.signed_in_at || '').localeCompare(b.signed_in_at || ''));
         }
-        return [];
+        let query = supabaseClient.from('roster').select('*').eq('sandbox_mode', currentSandboxFlag());
+        if (eventId) {
+            query = query.eq('event_id', eventId);
+        }
+        const { data, error } = await query.order('signed_in_at', { ascending: true });
+        if (error) throw error;
+        return data || [];
     } catch (error) {
         console.error('Get roster error:', error);
         return [];
@@ -1091,7 +1139,7 @@ async function addRosterEntry(entry) {
     try {
         if (isMockMode()) {
             const store = getMockStore();
-            const record = { id: makeId(), ...entry };
+            const record = { id: makeId(), ...entry, sandbox_mode: currentSandboxFlag() };
             store.roster.push(record);
             setMockStore(store);
             logAuditEntry({
@@ -1139,7 +1187,7 @@ async function createLocation(locationData) {
     try {
         if (isMockMode()) {
             const store = getMockStore();
-            const record = { id: makeId(), ...locationData };
+            const record = { id: makeId(), ...locationData, sandbox_mode: currentSandboxFlag() };
             store.locations.push(record);
             setMockStore(store);
             logAuditEntry({
@@ -1153,7 +1201,7 @@ async function createLocation(locationData) {
         }
         const { data, error } = await supabaseClient
             .from('locations')
-            .insert([locationData])
+            .insert([{ ...locationData, sandbox_mode: currentSandboxFlag() }])
             .select()
             .single();
         if (error) throw error;
@@ -1230,7 +1278,8 @@ async function getSupportTickets() {
     try {
         if (isMockMode()) {
             const store = getMockStore();
-            return Array.isArray(store.supportTickets) ? store.supportTickets : [];
+            const data = Array.isArray(store.supportTickets) ? store.supportTickets : [];
+            return filterBySandbox(data);
         }
         return [];
     } catch (error) {
@@ -1247,7 +1296,8 @@ async function addSupportTicket(ticket) {
                 id: makeId(),
                 status: 'open',
                 created_at: new Date().toISOString(),
-                ...ticket
+                ...ticket,
+                sandbox_mode: currentSandboxFlag()
             };
             store.supportTickets = Array.isArray(store.supportTickets) ? store.supportTickets : [];
             store.supportTickets.push(record);
@@ -1302,7 +1352,8 @@ async function getLogs() {
     try {
         if (isMockMode()) {
             const store = getMockStore();
-            return Array.isArray(store.logs) ? store.logs : [];
+            const data = Array.isArray(store.logs) ? store.logs : [];
+            return filterBySandbox(data);
         }
         return [];
     } catch (error) {
@@ -1332,7 +1383,8 @@ function logAuditEntry({ action, entityType, entityId, entityName, details }) {
             actor_name: actorName,
             actor_rank: actorRank,
             actor_role: actor.role || '',
-            created_at: new Date().toISOString()
+            created_at: new Date().toISOString(),
+            sandbox_mode: currentSandboxFlag()
         };
         store.logs = Array.isArray(store.logs) ? store.logs : [];
         store.logs.push(entry);
@@ -1346,7 +1398,13 @@ async function addLogEntry(entry) {
     try {
         if (isMockMode()) {
             const store = getMockStore();
-            const record = { id: makeId(), type: entry.type || 'note', created_at: entry.created_at || new Date().toISOString(), ...entry };
+            const record = {
+                id: makeId(),
+                type: entry.type || 'note',
+                created_at: entry.created_at || new Date().toISOString(),
+                sandbox_mode: currentSandboxFlag(),
+                ...entry
+            };
             store.logs = Array.isArray(store.logs) ? store.logs : [];
             store.logs.push(record);
             setMockStore(store);
@@ -1372,6 +1430,72 @@ async function clearLogs() {
         console.error('Clear logs error:', error);
         throw error;
     }
+}
+
+// ==================== MIGRATION UTILITIES ====================
+
+async function pushMockDataToSupabase() {
+    if (isMockMode()) {
+        throw new Error('Disable mock mode before pushing to Supabase.');
+    }
+    if (!supabaseClient) {
+        throw new Error('Supabase client not initialized.');
+    }
+
+    const raw = localStorage.getItem(MOCK_STORAGE_KEY_BASE);
+    if (!raw) {
+        throw new Error('No local mock data found.');
+    }
+
+    const store = JSON.parse(raw);
+    const withSandbox = (items) => (Array.isArray(items) ? items.map(item => ({ ...item, sandbox_mode: true })) : []);
+
+    const roles = Array.isArray(store.roles) ? store.roles.map(name => ({ name })) : [];
+    const users = withSandbox(store.users);
+    const events = withSandbox(store.events);
+    const locations = withSandbox(store.locations);
+    const assets = withSandbox(store.assets);
+    const personnel = withSandbox(store.personnel);
+    const activities = withSandbox(store.activities);
+    const roster = withSandbox(store.roster);
+    const logs = withSandbox(store.logs);
+    const supportTickets = withSandbox(store.supportTickets);
+
+    const upsertById = async (table, rows) => {
+        if (!rows.length) return;
+        const { error } = await supabaseClient
+            .from(table)
+            .upsert(rows, { onConflict: 'id' });
+        if (error) throw error;
+    };
+
+    if (roles.length) {
+        const { error } = await supabaseClient
+            .from('roles')
+            .upsert(roles, { onConflict: 'name' });
+        if (error) throw error;
+    }
+
+    await upsertById('users', users);
+    await upsertById('events', events);
+    await upsertById('locations', locations);
+    await upsertById('assets', assets);
+    await upsertById('personnel', personnel);
+    await upsertById('activities', activities);
+    await upsertById('roster', roster);
+    await upsertById('logs', logs);
+    await upsertById('support_tickets', supportTickets);
+
+    return {
+        events: events.length,
+        activities: activities.length,
+        assets: assets.length,
+        personnel: personnel.length,
+        locations: locations.length,
+        roster: roster.length,
+        logs: logs.length,
+        supportTickets: supportTickets.length
+    };
 }
 
 // ==================== ASSIGNMENT FUNCTIONS ====================
@@ -1712,6 +1836,7 @@ window.getRoles = getRoles;
 window.getLogs = getLogs;
 window.addLogEntry = addLogEntry;
 window.clearLogs = clearLogs;
+window.pushMockDataToSupabase = pushMockDataToSupabase;
 window.getSupportTickets = getSupportTickets;
 window.addSupportTicket = addSupportTicket;
 window.resolveSupportTicket = resolveSupportTicket;
@@ -1730,3 +1855,24 @@ window.assignPersonnelToAsset = assignPersonnelToAsset;
 window.assignAssetToActivity = assignAssetToActivity;
 window.unassignPersonnel = unassignPersonnel;
 window.unassignAsset = unassignAsset;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
