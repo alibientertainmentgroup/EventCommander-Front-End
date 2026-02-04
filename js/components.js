@@ -23,24 +23,18 @@ function formatEventDates(event) {
     const start = event.start_date ? parseDateLocal(event.start_date) : null;
     const end = event.end_date ? parseDateLocal(event.end_date) : null;
 
+    const fmt = (d) =>
+        d.toLocaleDateString('en-US', { day: '2-digit', month: 'long', year: 'numeric' });
+
     if (!start && !end) return 'Dates TBD';
     if (start && !end) {
-        return start.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+        return fmt(start);
     }
     if (!start && end) {
-        return end.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+        return fmt(end);
     }
 
-    const sameMonth = start.getMonth() === end.getMonth() && start.getFullYear() === end.getFullYear();
-    if (sameMonth) {
-        const month = start.toLocaleDateString('en-US', { month: 'short' });
-        const year = start.getFullYear();
-        return `${month} ${start.getDate()}â€“${end.getDate()}, ${year}`;
-    }
-
-    const startStr = start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-    const endStr = end.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-    return `${startStr}â€“${endStr}`;
+    return `${fmt(start)} - ${fmt(end)}`;
 }
 
 // ==================== DASHBOARD COMPONENTS ====================
