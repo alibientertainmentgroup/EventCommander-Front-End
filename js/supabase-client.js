@@ -968,7 +968,11 @@ async function getLocations() {
             .eq('sandbox_mode', currentSandboxFlag())
             .order('name', { ascending: true });
         if (error) throw error;
-        return data || [];
+        return (data || []).map(row => ({
+            ...row,
+            firstName: row.firstName != null ? row.firstName : row.firstname,
+            lastName: row.lastName != null ? row.lastName : row.lastname
+        }));
     } catch (error) {
         console.error('Get locations error:', error);
         return [];
@@ -1151,14 +1155,18 @@ async function addRosterEntry(entry) {
             });
             return record;
         }
-        const payload = { ...entry, sandbox_mode: currentSandboxFlag() };
+        const payload = normalizeRosterPayload({ ...entry, sandbox_mode: currentSandboxFlag() });
         const { data, error } = await supabaseClient
             .from('roster')
             .insert([payload])
             .select()
             .single();
         if (error) throw error;
-        return data;
+        return {
+            ...data,
+            firstName: data.firstName != null ? data.firstName : data.firstname,
+            lastName: data.lastName != null ? data.lastName : data.lastname
+        };
     } catch (error) {
         console.error('Add roster error:', error);
         throw error;
@@ -1183,7 +1191,8 @@ async function updateRosterEntry(entry) {
             });
             return store.roster[idx];
         }
-        const { id, ...payload } = entry || {};
+        const { id, ...payloadRaw } = entry || {};
+        const payload = normalizeRosterPayload(payloadRaw);
         const { data, error } = await supabaseClient
             .from('roster')
             .update(payload)
@@ -1191,7 +1200,11 @@ async function updateRosterEntry(entry) {
             .select()
             .single();
         if (error) throw error;
-        return data;
+        return {
+            ...data,
+            firstName: data.firstName != null ? data.firstName : data.firstname,
+            lastName: data.lastName != null ? data.lastName : data.lastname
+        };
     } catch (error) {
         console.error('Update roster error:', error);
         throw error;
@@ -1892,3 +1905,15 @@ window.unassignAsset = unassignAsset;
 
 
 
+function normalizeRosterPayload(entry) {
+    const payload = { ...(entry || {}) };
+    if (payload.firstName != null && payload.firstname == null) {
+        payload.firstname = payload.firstName;
+        delete payload.firstName;
+    }
+    if (payload.lastName != null && payload.lastname == null) {
+        payload.lastname = payload.lastName;
+        delete payload.lastName;
+    }
+    return payload;
+}
