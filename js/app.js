@@ -1004,12 +1004,12 @@ async function signInInprocessing(role) {
         alert('Invalid CAP ID.');
         return;
     }
-    const activeEntry = appState.roster.find(r => String(r.capId) === capId && !r.signed_out_at);
+    const activeEntry = appState.roster.find(r => String(r.cap_id) === capId && !r.signed_out_at);
     if (activeEntry) {
         alert('This CAP ID is already signed in.');
         return;
     }
-    const previousEntry = appState.roster.find(r => String(r.capId) === capId && r.signed_out_at);
+    const previousEntry = appState.roster.find(r => String(r.cap_id) === capId && r.signed_out_at);
     const firstName = appState.inprocessProfile.firstName || '';
     const lastName = appState.inprocessProfile.lastName || '';
     const fullName = `${firstName} ${lastName}`.trim();
@@ -1032,7 +1032,7 @@ async function signInInprocessing(role) {
         } else {
             const entry = {
                 event_id: appState.selectedEvent.id,
-                capId,
+                cap_id: capId,
                 rank: appState.inprocessProfile.rank || '',
                 name: fullName || '',
                 firstName,
@@ -1072,7 +1072,7 @@ function getActiveRosterEntry() {
     if (!profile) return null;
     const capId = String(profile.capId || '').trim();
     if (!capId) return null;
-    return appState.roster.find(r => String(r.capId) === capId && !r.signed_out_at) || null;
+    return appState.roster.find(r => String(r.cap_id) === capId && !r.signed_out_at) || null;
 }
 
 function setInprocessStation(name) {
@@ -1261,7 +1261,7 @@ async function signOutInprocessing() {
         alert('Invalid CAP ID.');
         return;
     }
-    const entry = appState.roster.find(r => String(r.capId) === capId && !r.signed_out_at);
+    const entry = appState.roster.find(r => String(r.cap_id) === capId && !r.signed_out_at);
     if (!entry) {
         alert('This CAP ID is not currently signed in.');
         return;

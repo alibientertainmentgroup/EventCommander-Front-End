@@ -1151,7 +1151,14 @@ async function addRosterEntry(entry) {
             });
             return record;
         }
-        return null;
+        const payload = { ...entry, sandbox_mode: currentSandboxFlag() };
+        const { data, error } = await supabaseClient
+            .from('roster')
+            .insert([payload])
+            .select()
+            .single();
+        if (error) throw error;
+        return data;
     } catch (error) {
         console.error('Add roster error:', error);
         throw error;
@@ -1176,7 +1183,15 @@ async function updateRosterEntry(entry) {
             });
             return store.roster[idx];
         }
-        return null;
+        const { id, ...payload } = entry || {};
+        const { data, error } = await supabaseClient
+            .from('roster')
+            .update(payload)
+            .eq('id', id)
+            .select()
+            .single();
+        if (error) throw error;
+        return data;
     } catch (error) {
         console.error('Update roster error:', error);
         throw error;
