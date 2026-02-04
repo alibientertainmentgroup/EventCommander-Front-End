@@ -23,6 +23,14 @@ let appState = {
     inprocessMessage: 'Google Sheet lookup not connected yet.'
 };
 
+function normalizeCapId(value) {
+    const raw = String(value || '').trim();
+    if (!raw) return '';
+    const digits = raw.replace(/\D/g, '');
+    if (!digits) return raw;
+    return digits.length < 6 ? digits.padStart(6, '0') : digits;
+}
+
 function updateContextUI() {
     const appScreen = document.getElementById('appScreen');
     if (!appScreen) return;
@@ -943,7 +951,7 @@ function openRosterProfile(id) {
 function lookupInprocessingCadet() {
     const input = document.getElementById('inprocessCapId');
     if (!input) return;
-    const capId = input.value.trim();
+    const capId = normalizeCapId(input.value);
     if (!capId) {
         appState.inprocessProfile = null;
         appState.inprocessMessage = 'Enter a CAP ID to search.';
@@ -952,7 +960,7 @@ function lookupInprocessingCadet() {
     }
     fetchInprocessingData()
         .then(rows => {
-            const match = rows.find(r => String(r.capId || '').trim() === capId);
+            const match = rows.find(r => normalizeCapId(r.capId) === capId);
             if (!match) {
                 appState.inprocessProfile = null;
                 appState.inprocessMessage = `No record found for CAP ID ${capId}.`;
@@ -999,17 +1007,17 @@ async function signInInprocessing(role) {
         alert('Lookup a CAP ID first.');
         return;
     }
-    const capId = String(appState.inprocessProfile.capId || '').trim();
+    const capId = normalizeCapId(appState.inprocessProfile.capId);
     if (!capId) {
         alert('Invalid CAP ID.');
         return;
     }
-    const activeEntry = appState.roster.find(r => String(r.cap_id) === capId && !r.signed_out_at);
+    const activeEntry = appState.roster.find(r => normalizeCapId(r.cap_id) === capId && !r.signed_out_at);
     if (activeEntry) {
         alert('This CAP ID is already signed in.');
         return;
     }
-    const previousEntry = appState.roster.find(r => String(r.cap_id) === capId && r.signed_out_at);
+    const previousEntry = appState.roster.find(r => normalizeCapId(r.cap_id) === capId && r.signed_out_at);
     const firstName = appState.inprocessProfile.firstName || '';
     const lastName = appState.inprocessProfile.lastName || '';
     const fullName = `${firstName} ${lastName}`.trim();
@@ -1070,9 +1078,9 @@ function buildDefaultStations() {
 function getActiveRosterEntry() {
     const profile = appState.inprocessProfile;
     if (!profile) return null;
-    const capId = String(profile.capId || '').trim();
+    const capId = normalizeCapId(profile.capId);
     if (!capId) return null;
-    return appState.roster.find(r => String(r.cap_id) === capId && !r.signed_out_at) || null;
+    return appState.roster.find(r => normalizeCapId(r.cap_id) === capId && !r.signed_out_at) || null;
 }
 
 function setInprocessStation(name) {
@@ -1256,12 +1264,12 @@ async function signOutInprocessing() {
         alert('Lookup a CAP ID first.');
         return;
     }
-    const capId = String(appState.inprocessProfile.capId || '').trim();
+    const capId = normalizeCapId(appState.inprocessProfile.capId);
     if (!capId) {
         alert('Invalid CAP ID.');
         return;
     }
-    const entry = appState.roster.find(r => String(r.cap_id) === capId && !r.signed_out_at);
+    const entry = appState.roster.find(r => normalizeCapId(r.cap_id) === capId && !r.signed_out_at);
     if (!entry) {
         alert('This CAP ID is not currently signed in.');
         return;
