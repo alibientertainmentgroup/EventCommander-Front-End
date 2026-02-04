@@ -1,4 +1,4 @@
-// UI Components and Rendering Functions
+﻿// UI Components and Rendering Functions
 
 const ROLE_COLORS = {
     'driver': { bg: 'rgba(59, 130, 246, 0.7)', border: 'rgba(59, 130, 246, 0.95)' },
@@ -35,12 +35,12 @@ function formatEventDates(event) {
     if (sameMonth) {
         const month = start.toLocaleDateString('en-US', { month: 'short' });
         const year = start.getFullYear();
-        return `${month} ${start.getDate()}–${end.getDate()}, ${year}`;
+        return `${month} ${start.getDate()}â€“${end.getDate()}, ${year}`;
     }
 
     const startStr = start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
     const endStr = end.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-    return `${startStr}–${endStr}`;
+    return `${startStr}â€“${endStr}`;
 }
 
 // ==================== DASHBOARD COMPONENTS ====================
@@ -60,15 +60,18 @@ function renderAdminHome(events) {
                 <h2 class="page-title">SELECT EVENT</h2>
                 <p class="page-subtitle">Choose an event to manage or create a new one</p>
             </div>
-            ${isPrivileged() ? `
-            <button class="btn btn-blue" onclick="openEventModal()">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <line x1="12" y1="5" x2="12" y2="19"></line>
-                    <line x1="5" y1="12" x2="19" y2="12"></line>
-                </svg>
-                NEW EVENT
-            </button>
-            ` : ''}
+            <div class="flex gap-2" style="align-items:center;">
+                <label class="toggle-row toggle-switch" style="margin:0;">\n                    <input type="checkbox" ${appState.sandboxMode ? 'checked' : ''} onchange="toggleSandboxMode()">\n                    <span class="toggle-track"></span>\n                    <span class="toggle-label">Sandbox Mode</span>\n                </label>
+                ${isPrivileged() ? `
+                <button class="btn btn-blue" onclick="openEventModal()">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="12" y1="5" x2="12" y2="19"></line>
+                        <line x1="5" y1="12" x2="19" y2="12"></line>
+                    </svg>
+                    NEW EVENT
+                </button>
+                ` : ''}
+            </div>
         </div>
 
         <div class="events-grid">
@@ -77,7 +80,6 @@ function renderAdminHome(events) {
 
         ${events.length === 0 ? `
             <div class="empty-state">
-                <div class="empty-state-icon">📅</div>
                 <div class="empty-state-text">No events yet</div>
             </div>
         ` : ''}
@@ -132,15 +134,18 @@ function renderEvents(events) {
             <div>
                 <h2 class="page-title">EVENTS</h2>
             </div>
-            ${isPrivileged() ? `
-                <button class="btn btn-blue" onclick="openEventModal()">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <line x1="12" y1="5" x2="12" y2="19"></line>
-                        <line x1="5" y1="12" x2="19" y2="12"></line>
-                    </svg>
-                    NEW EVENT
-                </button>
-            ` : ''}
+            <div class="flex gap-2" style="align-items:center;">
+                <label class="toggle-row toggle-switch" style="margin:0;">\n                    <input type="checkbox" ${appState.sandboxMode ? 'checked' : ''} onchange="toggleSandboxMode()">\n                    <span class="toggle-track"></span>\n                    <span class="toggle-label">Sandbox Mode</span>\n                </label>
+                ${isPrivileged() ? `
+                    <button class="btn btn-blue" onclick="openEventModal()">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="12" y1="5" x2="12" y2="19"></line>
+                            <line x1="5" y1="12" x2="19" y2="12"></line>
+                        </svg>
+                        NEW EVENT
+                    </button>
+                ` : ''}
+            </div>
         </div>
 
         <div class="events-grid">
@@ -149,7 +154,7 @@ function renderEvents(events) {
 
         ${events.length === 0 ? `
             <div class="empty-state">
-                <div class="empty-state-icon">📅</div>
+                <div class="empty-state-icon">??</div>
                 <div class="empty-state-text">No events yet</div>
             </div>
         ` : ''}
@@ -378,10 +383,10 @@ function renderRoster(roster) {
                     ${sorted.length ? sorted.map(r => `
                         <tr class="roster-line" onclick="openRosterProfile('${r.id}')">
                             <td>${r.lastName ? `${r.lastName}${r.firstName ? `, ${r.firstName}` : ''}` : (r.name || 'Unknown')}</td>
-                            <td>${r.rank || '—'}</td>
+                            <td>${r.rank || 'â€”'}</td>
                             <td>${r.capId || r.cap_id || 'N/A'}</td>
                             <td>${formatSignedIn(r.signed_in_at)}</td>
-                            <td>${r.signed_out_at ? formatSignedIn(r.signed_out_at) : '—'}</td>
+                            <td>${r.signed_out_at ? formatSignedIn(r.signed_out_at) : 'â€”'}</td>
                         </tr>
                     `).join('') : '<tr><td class="empty-state-text text-center" colspan="5">No roster entries yet</td></tr>'}
                 </tbody>
@@ -465,6 +470,13 @@ function renderSchedule(entries) {
                 <div>
                     <h2 class="page-title">SCHEDULE</h2>
                 </div>
+                <div class="flex gap-2" style="align-items:center;">
+                    <label class="toggle-row toggle-switch" style="margin:0;">
+                        <input type="checkbox" ${appState.sandboxMode ? 'checked' : ''} onchange="toggleSandboxMode()">
+                        <span class="toggle-track"></span>
+                        <span class="toggle-label">Sandbox Mode</span>
+                    </label>
+                </div>
             </div>
             <div class="empty-state">
                 <div class="empty-state-text">No assignments yet</div>
@@ -484,6 +496,13 @@ function renderSchedule(entries) {
             <div>
                 <h2 class="page-title">SCHEDULE</h2>
             </div>
+            <div class="flex gap-2" style="align-items:center;">
+                <label class="toggle-row toggle-switch" style="margin:0;">
+                    <input type="checkbox" ${appState.sandboxMode ? 'checked' : ''} onchange="toggleSandboxMode()">
+                    <span class="toggle-track"></span>
+                    <span class="toggle-label">Sandbox Mode</span>
+                </label>
+            </div>
         </div>
 
         ${Object.keys(grouped).sort().map(date => `
@@ -493,8 +512,8 @@ function renderSchedule(entries) {
                     ${grouped[date].map(item => `
                         <div class="resource-item schedule-item">
                             <div class="schedule-info">
-                                <div class="resource-name">${item.title}${item.role ? ` • ${item.role}` : ''}${item.stayAtLocation ? ` • <span class="stay-label">Remain Onsite</span>` : ''}</div>
-                                <div class="resource-details">${item.start || 'TBD'}–${item.end || 'TBD'}</div>
+                                <div class="resource-name">${item.title}${item.role ? ` â€¢ ${item.role}` : ''}${item.stayAtLocation ? ` â€¢ <span class="stay-label">Remain Onsite</span>` : ''}</div>
+                                <div class="resource-details">${item.start || 'TBD'}â€“${item.end || 'TBD'}</div>
                                 ${item.asset ? `<div class="resource-details">Asset: ${item.asset.type || item.asset.name} ${item.asset.details || ''}</div>` : ''}
                                 ${item.fromLocation ? `<div class="resource-details">From: ${item.fromLocation}</div>` : ''}
                                 ${item.toLocation ? `<div class="resource-details">To: ${item.toLocation}</div>` : ''}
@@ -522,7 +541,7 @@ function renderSchedule(entries) {
 }
 
 function renderStayLabel() {
-    return ` • <span class="stay-label">Remain Onsite</span>`;
+    return ` â€¢ <span class="stay-label">Remain Onsite</span>`;
 }
 
 function calculateInprocessAverage(roster) {
@@ -823,7 +842,7 @@ function buildTimelineBars(resource, activities, type, date) {
             const width = Math.max(2, (endMin - startMin) / total * 100);
             const label = activity.title;
             const stayIcon = entry.stay_at_location ? ` ${renderStayLabel()}` : '';
-            const title = entry.stay_at_location ? `${label} • Remain Onsite` : label;
+            const title = entry.stay_at_location ? `${label} â€¢ Remain Onsite` : label;
             if (type === 'personnel') {
                 const style = roleStyle(entry.role);
                 bars.push(`<div class="timeline-bar${entry.stay_at_location ? ' timeline-bar-stay' : ''}" data-label="${label}" style="left:${left}%;width:${width}%;background:${style.bg};border-color:${style.border};" title="${title}">${label}${stayIcon}</div>`);
@@ -941,7 +960,7 @@ function renderAdminPanel() {
                 ${roles.map(role => `
                     <div class="tag admin-role-tag">
                         <span>${role}</span>
-                        <button class="tag-remove" onclick="deleteAdminRole('${role.replace(/'/g, "\\'")}')">×</button>
+                        <button class="tag-remove" onclick="deleteAdminRole('${role.replace(/'/g, "\\'")}')">Ã—</button>
                     </div>
                 `).join('')}
             </div>
@@ -1092,11 +1111,11 @@ function renderSupportTicket() {
                 </div>
                 <div class="ticket-meta-row">
                     <span>Opened: ${formatSignedIn(ticket.created_at)}</span>
-                    ${isClosed ? `<span>Closed: ${ticket.closed_at ? formatSignedIn(ticket.closed_at) : '�'}</span>` : ''}
-                    ${isClosed ? `<span>Closed By: ${ticket.closed_by || '�'}</span>` : ''}
+                    ${isClosed ? `<span>Closed: ${ticket.closed_at ? formatSignedIn(ticket.closed_at) : '—'}</span>` : ''}
+                    ${isClosed ? `<span>Closed By: ${ticket.closed_by || '—'}</span>` : ''}
                 </div>
                 <div class="ticket-details">${ticket.details || ''}</div>
-                ${isClosed ? `<div class="ticket-details ticket-remarks">Remarks: ${ticket.closed_remarks || '�'}</div>` : ''}
+                ${isClosed ? `<div class="ticket-details ticket-remarks">Remarks: ${ticket.closed_remarks || '—'}</div>` : ''}
                 ${isClosed ? '' : `
                     <div class="ticket-actions">
                         <button class="btn btn-outline btn-small" onclick="openResolveSupportTicket('${ticket.id}')">Close Ticket</button>
@@ -1164,8 +1183,8 @@ function renderLog() {
                     const isAudit = entry.type === 'audit';
                     const name = entry.lastName ? `${entry.lastName}, ${entry.firstName || ''}` : (entry.name || 'Unknown');
                     const header = isAudit
-                        ? `AUDIT � ${entry.action || 'update'} � ${entry.entity_type || 'unknown'}${entry.entity_name ? ` � ${entry.entity_name}` : ''}`
-                        : `${name} � CAP ${entry.cap_id || 'N/A'} � ${entry.rank || '�'}`;
+                        ? `AUDIT • ${entry.action || 'update'} • ${entry.entity_type || 'unknown'}${entry.entity_name ? ` • ${entry.entity_name}` : ''}`
+                        : `${name} • CAP ${entry.cap_id || 'N/A'} • ${entry.rank || '—'}`;
                     const details = isAudit
                         ? `<pre class="log-details">${escapeReportText(JSON.stringify(entry.details || {}, null, 2))}</pre>`
                         : `<div class="resource-details">${entry.message || ''}</div>`;
@@ -1214,4 +1233,7 @@ function showLoading() {
 function hideLoading() {
     document.getElementById('loadingIndicator').style.display = 'none';
 }
+
+
+
 
