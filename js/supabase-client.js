@@ -993,11 +993,7 @@ async function getRoster(eventId = null) {
         }
         const { data, error } = await query.order('signed_in_at', { ascending: true });
         if (error) throw error;
-        return (data || []).map(row => ({
-            ...row,
-            firstName: row.firstName != null ? row.firstName : row.firstname,
-            lastName: row.lastName != null ? row.lastName : row.lastname
-        }));
+        return data || [];
     } catch (error) {
         console.error('Get roster error:', error);
         return [];
@@ -1155,18 +1151,14 @@ async function addRosterEntry(entry) {
             });
             return record;
         }
-        const payload = normalizeRosterPayload({ ...entry, sandbox_mode: currentSandboxFlag() });
+        const payload = { ...entry, sandbox_mode: currentSandboxFlag() };
         const { data, error } = await supabaseClient
             .from('roster')
             .insert([payload])
             .select()
             .single();
         if (error) throw error;
-        return {
-            ...data,
-            firstName: data.firstName != null ? data.firstName : data.firstname,
-            lastName: data.lastName != null ? data.lastName : data.lastname
-        };
+        return data;
     } catch (error) {
         console.error('Add roster error:', error);
         throw error;
@@ -1191,8 +1183,7 @@ async function updateRosterEntry(entry) {
             });
             return store.roster[idx];
         }
-        const { id, ...payloadRaw } = entry || {};
-        const payload = normalizeRosterPayload(payloadRaw);
+        const { id, ...payload } = entry || {};
         const { data, error } = await supabaseClient
             .from('roster')
             .update(payload)
@@ -1200,29 +1191,13 @@ async function updateRosterEntry(entry) {
             .select()
             .single();
         if (error) throw error;
-        return {
-            ...data,
-            firstName: data.firstName != null ? data.firstName : data.firstname,
-            lastName: data.lastName != null ? data.lastName : data.lastname
-        };
+        return data;
     } catch (error) {
         console.error('Update roster error:', error);
         throw error;
     }
 }
 
-function normalizeRosterPayload(entry) {
-    const payload = { ...(entry || {}) };
-    if (payload.firstName != null && payload.firstname == null) {
-        payload.firstname = payload.firstName;
-        delete payload.firstName;
-    }
-    if (payload.lastName != null && payload.lastname == null) {
-        payload.lastname = payload.lastName;
-        delete payload.lastName;
-    }
-    return payload;
-}
 
 async function createLocation(locationData) {
     try {
