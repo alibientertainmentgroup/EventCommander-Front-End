@@ -1,4 +1,4 @@
-/* CSS Variables for CAP Colors */
+﻿/* CSS Variables for CAP Colors */
 :root {
     --primary-bg: #0f172a;
     --secondary-bg: #1e293b;
@@ -1356,6 +1356,110 @@ body {
     font-size: 12px;
 }
 
+.toggle-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+
+.toggle-row:not(.toggle-switch) input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    accent-color: var(--blue-primary);
+}
+.toggle-label {
+    font-family: monospace;
+}
+
+.toggle-switch {
+    cursor: pointer;
+    user-select: none;
+    position: relative;
+}
+.toggle-switch input[type="checkbox"] {
+    position: absolute;
+    opacity: 0;
+    width: 0;
+    height: 0;
+    appearance: none;
+    -webkit-appearance: none;
+}
+
+/* Sandbox Mode Banner */
+.sandbox-banner {
+    background: #b31217;
+    color: #ffffff;
+    text-align: center;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 10px 12px;
+    margin-bottom: 16px;
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    box-shadow: 0 10px 20px rgba(0, 0, 0, 0.25);
+}
+
+.toggle-track {
+    width: 40px;
+    height: 22px;
+    border-radius: 999px;
+    background: rgba(51, 65, 85, 0.7);
+    border: 1px solid var(--border);
+    position: relative;
+    transition: background 0.2s ease, border-color 0.2s ease;
+    display: inline-block;
+    flex-shrink: 0;
+}
+.toggle-track::before {
+    content: '';
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--text-muted);
+    transition: transform 0.2s ease, background 0.2s ease;
+}
+
+.sandbox-flag {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-left: 8px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: #fff;
+    background: #b31217;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+}
+.sandbox-flag::before {
+    content: '⚑';
+    font-size: 12px;
+    line-height: 1;
+}
+
+.toggle-switch input[type="checkbox"]:checked + .toggle-track {
+    background: rgba(59, 130, 246, 0.35);
+    border-color: var(--blue-primary);
+}
+
+.toggle-switch input[type="checkbox"]:checked + .toggle-track::before {
+    transform: translateX(18px);
+    background: var(--blue-secondary);
+}
+
+.toggle-switch input[type="checkbox"]:focus-visible + .toggle-track {
+    outline: 2px solid var(--blue-secondary);
+    outline-offset: 2px;
+}
 .btn-icon .icon {
     width: 16px;
     height: 16px;
@@ -1665,3 +1769,7 @@ body {
 .cursor-pointer {
     cursor: pointer;
 }
+
+
+
+
