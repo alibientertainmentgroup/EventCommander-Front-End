@@ -1120,9 +1120,8 @@ async function completeStation() {
     try {
         await updateRosterEntry(entry);
         appState.roster = await getRoster(appState.selectedEvent.id);
-        appState.inprocessProfile = null;
-        appState.inprocessStation = null;
-        appState.inprocessMessage = 'Station complete. Ready for next lookup.';
+        // Keep the active profile/selection so station status updates in-place.
+        appState.inprocessMessage = 'Station complete.';
         renderCurrentView();
     } catch (error) {
         console.error('Complete station failed:', error);
