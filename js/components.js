@@ -381,7 +381,7 @@ function renderRoster(roster) {
                             <td>${r.rank || 'â€”'}</td>
                             <td>${r.capId || r.cap_id || 'N/A'}</td>
                             <td>${formatSignedIn(r.signed_in_at)}</td>
-                            <td>${r.signed_out_at ? formatSignedIn(r.signed_out_at) : 'â€”'}</td>
+                            <td>${r.signed_out_at ? formatSignedIn(r.signed_out_at) : ''}</td>
                         </tr>
                     `).join('') : '<tr><td class="empty-state-text text-center" colspan="5">No roster entries yet</td></tr>'}
                 </tbody>
