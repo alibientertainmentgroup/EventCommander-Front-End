@@ -61,7 +61,7 @@ function renderAdminHome(events) {
                 <p class="page-subtitle">Choose an event to manage or create a new one</p>
             </div>
             <div class="flex gap-2" style="align-items:center;">
-                <label class="toggle-row toggle-switch" style="margin:0;">\n                    <input type="checkbox" ${appState.sandboxMode ? 'checked' : ''} onchange="toggleSandboxMode()">\n                    <span class="toggle-track"></span>\n                    <span class="toggle-label">Sandbox Mode</span>\n                    ${appState.sandboxMode ? '<span class="sandbox-flag">Sandbox</span>' : ''}\n                </label>
+                <label class="toggle-row toggle-switch" style="margin:0;">\n                    <input type="checkbox" ${appState.sandboxMode ? 'checked' : ''} onchange="toggleSandboxMode()">\n                    <span class="toggle-track"></span>\n                    <span class="toggle-label">Sandbox Mode</span>\n                </label>
                 ${isPrivileged() ? `
                 <button class="btn btn-blue" onclick="openEventModal()">
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -135,7 +135,7 @@ function renderEvents(events) {
                 <h2 class="page-title">EVENTS</h2>
             </div>
             <div class="flex gap-2" style="align-items:center;">
-                <label class="toggle-row toggle-switch" style="margin:0;">\n                    <input type="checkbox" ${appState.sandboxMode ? 'checked' : ''} onchange="toggleSandboxMode()">\n                    <span class="toggle-track"></span>\n                    <span class="toggle-label">Sandbox Mode</span>\n                    ${appState.sandboxMode ? '<span class="sandbox-flag">Sandbox</span>' : ''}\n                </label>
+                <label class="toggle-row toggle-switch" style="margin:0;">\n                    <input type="checkbox" ${appState.sandboxMode ? 'checked' : ''} onchange="toggleSandboxMode()">\n                    <span class="toggle-track"></span>\n                    <span class="toggle-label">Sandbox Mode</span>\n                </label>
                 ${isPrivileged() ? `
                     <button class="btn btn-blue" onclick="openEventModal()">
                         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -475,7 +475,6 @@ function renderSchedule(entries) {
                         <input type="checkbox" ${appState.sandboxMode ? 'checked' : ''} onchange="toggleSandboxMode()">
                         <span class="toggle-track"></span>
                         <span class="toggle-label">Sandbox Mode</span>
-                        ${appState.sandboxMode ? '<span class="sandbox-flag">Sandbox</span>' : ''}
                     </label>
                 </div>
             </div>
@@ -502,7 +501,6 @@ function renderSchedule(entries) {
                     <input type="checkbox" ${appState.sandboxMode ? 'checked' : ''} onchange="toggleSandboxMode()">
                     <span class="toggle-track"></span>
                     <span class="toggle-label">Sandbox Mode</span>
-                    ${appState.sandboxMode ? '<span class="sandbox-flag">Sandbox</span>' : ''}
                 </label>
             </div>
         </div>
