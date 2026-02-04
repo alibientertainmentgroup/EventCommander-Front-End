@@ -97,18 +97,19 @@ function renderEventsByStatus(status, events) {
                         <div class="empty-state-text">No ${status} events</div>
                     </div>` :
                     filteredEvents.map(event => {
-                        const personnelFilled = (event.assigned_personnel || []).length >= parseInt(event.personnel_needed || 0);
-                        const assetsFilled = (event.assigned_assets || []).length >= parseInt(event.assets_needed || 0);
+                        const totals = getEventActivityTotals(event.id, appState.activities);
+                        const personnelFilled = totals.assignedPersonnel >= totals.requiredPersonnel;
+                        const assetsFilled = totals.assignedAssets >= totals.requiredAssets;
                         
                         return `
                             <div class="resource-item cursor-pointer" onclick="showEventDetail('${event.id}')">
                                 <div class="resource-name">${event.title}</div>
                                 <div class="flex gap-2 mt-4">
                                     <span class="badge ${personnelFilled ? 'status-green' : 'status-red'}" style="background: ${personnelFilled ? 'rgba(34, 197, 94, 0.2)' : 'rgba(239, 68, 68, 0.2)'}">
-                                        P: ${(event.assigned_personnel || []).length}/${event.personnel_needed || 0}
+                                        P: ${totals.assignedPersonnel}/${totals.requiredPersonnel}
                                     </span>
                                     <span class="badge ${assetsFilled ? 'status-green' : 'status-red'}" style="background: ${assetsFilled ? 'rgba(34, 197, 94, 0.2)' : 'rgba(239, 68, 68, 0.2)'}">
-                                        A: ${(event.assigned_assets || []).length}/${event.assets_needed || 0}
+                                        A: ${totals.assignedAssets}/${totals.requiredAssets}
                                     </span>
                                 </div>
                             </div>

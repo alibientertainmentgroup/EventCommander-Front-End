@@ -1437,6 +1437,7 @@ async function selectEvent(eventId, targetView = 'dashboard') {
 
 function renderEventDetailView(event, activities) {
     const columns = ['Planning', 'Ready', 'In Progress', 'Completed'];
+    const totals = getEventActivityTotals(event.id, activities);
     
     return `
         <div style="margin-bottom: 24px;">
@@ -1465,11 +1466,11 @@ function renderEventDetailView(event, activities) {
             <div class="flex gap-4">
                 <div style="flex: 1;">
                     <div class="metric-label">Personnel Needed</div>
-                    <div class="metric-value status-blue">${(event.assigned_personnel || []).length} / ${event.personnel_needed || 0}</div>
+                    <div class="metric-value status-blue">${totals.assignedPersonnel} / ${totals.requiredPersonnel}</div>
                 </div>
                 <div style="flex: 1;">
                     <div class="metric-label">Assets Needed</div>
-                    <div class="metric-value status-blue">${(event.assigned_assets || []).length} / ${event.assets_needed || 0}</div>
+                    <div class="metric-value status-blue">${totals.assignedAssets} / ${totals.requiredAssets}</div>
                 </div>
             </div>
         </div>
@@ -1856,6 +1857,17 @@ function isActivityFullyAssigned(activity) {
 function getNonDriverAssignedCount(activity) {
     const entries = normalizeAssignmentEntries(activity.assigned_personnel || [], 'personnel');
     return entries.filter(entry => !(entry.auto_driver || isVehicleOperatorRole(entry.role))).length;
+}
+
+function getEventActivityTotals(eventId, activities) {
+    const list = (activities || appState.activities || []).filter(a => String(a.event_id) === String(eventId));
+    return list.reduce((totals, activity) => {
+        totals.requiredPersonnel += getRequiredCount(activity.support_personnel_required);
+        totals.requiredAssets += getRequiredCount(activity.assets_required);
+        totals.assignedPersonnel += getNonDriverAssignedCount(activity);
+        totals.assignedAssets += getAssignedIds(activity.assigned_assets, 'assets').length;
+        return totals;
+    }, { requiredPersonnel: 0, requiredAssets: 0, assignedPersonnel: 0, assignedAssets: 0 });
 }
 
 function isVehicleOperatorRole(role) {
