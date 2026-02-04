@@ -160,9 +160,14 @@ function renderEvents(events) {
 
 function renderInprocessing() {
     const activeProfile = appState.inprocessProfile;
-    const activeCapId = activeProfile ? String(activeProfile.capId || '').trim() : '';
+    const activeCapId = activeProfile ? (typeof normalizeCapId === 'function' ? normalizeCapId(activeProfile.capId) : String(activeProfile.capId || '').trim()) : '';
     const activeEntry = activeCapId
-        ? appState.roster.find(r => String(r.capId) === activeCapId && !r.signed_out_at)
+        ? appState.roster.find(r => {
+            const rosterCap = typeof normalizeCapId === 'function'
+                ? normalizeCapId(r.cap_id || r.capId)
+                : String(r.cap_id || r.capId || '').trim();
+            return rosterCap === activeCapId && !r.signed_out_at;
+        })
         : null;
     const isSignedIn = !!activeEntry;
     const isStudent = isSignedIn && activeEntry.role === 'student';
@@ -257,9 +262,14 @@ function renderInprocessing() {
 
 function renderOutprocessing() {
     const activeProfile = appState.inprocessProfile;
-    const activeCapId = activeProfile ? String(activeProfile.capId || '').trim() : '';
+    const activeCapId = activeProfile ? (typeof normalizeCapId === 'function' ? normalizeCapId(activeProfile.capId) : String(activeProfile.capId || '').trim()) : '';
     const activeEntry = activeCapId
-        ? appState.roster.find(r => String(r.capId) === activeCapId && !r.signed_out_at)
+        ? appState.roster.find(r => {
+            const rosterCap = typeof normalizeCapId === 'function'
+                ? normalizeCapId(r.cap_id || r.capId)
+                : String(r.cap_id || r.capId || '').trim();
+            return rosterCap === activeCapId && !r.signed_out_at;
+        })
         : null;
 
     return `
@@ -794,7 +804,7 @@ function renderTimelineHeader(dates) {
 
 function renderTimelineRow(row, activitiesByDate, type, dates) {
     const signedIn = type === 'personnel' && appState.roster.some(r =>
-        !r.signed_out_at && String(r.capId || r.cap_id || '') === String(row.cap_id || '')
+        !r.signed_out_at && String(r.cap_id || r.capId || '') === String(row.cap_id || '')
     );
     const statusClass = type === 'personnel' ? (signedIn ? 'status-blue' : 'status-red') : '';
     return `
