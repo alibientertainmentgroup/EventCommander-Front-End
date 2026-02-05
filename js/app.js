@@ -2701,6 +2701,10 @@ function openActivityDetail(activityId, options = {}) {
                         <input type="time" class="form-input" id="assignAssetEndTime" placeholder="End">
                         <button type="button" class="btn btn-outline btn-small" onclick="assignAssetToActivityAction('${activityId}')">Assign</button>
                     </div>
+                    <label class="form-label" style="margin: 0; display:flex; align-items:center; gap:8px;">
+                        <input type="checkbox" id="assignAssetUseActivityTime" onchange="toggleAssignAssetActivityTime('${activityId}')">
+                        Use activity time
+                    </label>
                 </div>
             </div>
             <div class="form-row">
@@ -2912,14 +2916,41 @@ function toggleAssignPersonnelActivityTime(activityId) {
     endInput.disabled = true;
 }
 
+function toggleAssignAssetActivityTime(activityId) {
+    const activity = appState.activities.find(a => a.id === activityId);
+    const checkbox = document.getElementById('assignAssetUseActivityTime');
+    const startInput = document.getElementById('assignAssetStartTime');
+    const endInput = document.getElementById('assignAssetEndTime');
+    if (!checkbox || !startInput || !endInput) return;
+    if (!checkbox.checked) {
+        startInput.disabled = false;
+        endInput.disabled = false;
+        return;
+    }
+    if (!activity || !activity.start_time || !activity.end_time) {
+        checkbox.checked = false;
+        alert('Set the activity start/end time first.');
+        return;
+    }
+    startInput.value = activity.start_time;
+    endInput.value = activity.end_time;
+    startInput.disabled = true;
+    endInput.disabled = true;
+}
+
 async function assignAssetToActivityAction(activityId) {
     const select = document.getElementById('assignAssetSelect');
     const startInput = document.getElementById('assignAssetStartTime');
     const endInput = document.getElementById('assignAssetEndTime');
+    const useActivityTime = document.getElementById('assignAssetUseActivityTime');
+    const activity = appState.activities.find(a => a.id === activityId);
     if (!select || !select.value || !startInput || !endInput) return;
+    if (useActivityTime && useActivityTime.checked && activity) {
+        startInput.value = activity.start_time || '';
+        endInput.value = activity.end_time || '';
+    }
     if (!startInput.value || !endInput.value) return;
 
-    const activity = appState.activities.find(a => a.id === activityId);
     const assetId = String(select.value);
     const existingAssignments = normalizeAssignmentEntries(activity ? activity.assigned_assets : [], 'assets')
         .filter(entry => entry.id === assetId);
