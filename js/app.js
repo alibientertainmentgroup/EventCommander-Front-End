@@ -1477,11 +1477,7 @@ function renderEventDetailView(event, activities) {
                 <div class="event-dates">${formatEventDates(event)}</div>
                 <div class="event-dates" style="opacity:0.6;">Build ${BUILD_ID}</div>
             </div>
-            <div class="flex gap-2">
-                <button class="btn btn-outline" onclick="toggleActivitiesWithNeeds()">
-                    ${appState.showActivitiesWithNeeds ? 'Show All Activities' : 'Show Activities With Needs'}
-                </button>
-            </div>
+            <div class="flex gap-2"></div>
         </div>
 
         <div class="card mb-4">
@@ -1499,15 +1495,22 @@ function renderEventDetailView(event, activities) {
 
         <div class="flex-between mb-4">
             <h3 class="page-subtitle" style="font-size: 24px; font-family: 'Orbitron', monospace; color: var(--blue-secondary);">ACTIVITIES</h3>
-            ${isPrivileged() ? `
-                <button class="btn btn-blue btn-small" onclick="openActivityModal('${event.id}')">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <line x1="12" y1="5" x2="12" y2="19"></line>
-                        <line x1="5" y1="12" x2="19" y2="12"></line>
-                    </svg>
-                    ADD ACTIVITY
-                </button>
-            ` : ''}
+            <div class="flex gap-2" style="align-items:center;">
+                <label class="toggle-row toggle-switch" style="margin:0;">
+                    <input type="checkbox" ${appState.showActivitiesWithNeeds ? 'checked' : ''} onchange="toggleActivitiesWithNeeds()">
+                    <span class="toggle-track"></span>
+                    <span class="toggle-label">Show Activities With Needs</span>
+                </label>
+                ${isPrivileged() ? `
+                    <button class="btn btn-blue btn-small" onclick="openActivityModal('${event.id}')">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="12" y1="5" x2="12" y2="19"></line>
+                            <line x1="5" y1="12" x2="19" y2="12"></line>
+                        </svg>
+                        ADD ACTIVITY
+                    </button>
+                ` : ''}
+            </div>
         </div>
 
         <div class="kanban-board">
