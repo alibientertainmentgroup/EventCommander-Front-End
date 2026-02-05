@@ -1,5 +1,7 @@
 // Main Application Logic
 
+const BUILD_ID = '20260205-activities-toggle';
+
 let appState = {
     currentView: 'dashboard',
     events: [],
@@ -1473,6 +1475,7 @@ function renderEventDetailView(event, activities) {
                 <h2 class="page-title">${event.title}</h2>
                 <p class="page-subtitle">${event.description || ''}</p>
                 <div class="event-dates">${formatEventDates(event)}</div>
+                <div class="event-dates" style="opacity:0.6;">Build ${BUILD_ID}</div>
             </div>
             <div class="flex gap-2">
                 <button class="btn btn-outline" onclick="toggleActivitiesWithNeeds()">
