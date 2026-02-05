@@ -52,6 +52,11 @@ function toggleEventsWithNeeds() {
     renderCurrentView();
 }
 
+function showEventsWithNeedsFromPlanning() {
+    appState.showEventsWithNeeds = true;
+    switchView('events');
+}
+
 function getSupportRoles() {
     const fallback = ['Driver', 'Safety Officer', 'HSO', 'Support Staff', 'Orientation Pilot', 'TO', 'Other'];
     const roles = Array.isArray(appState.roles) && appState.roles.length ? appState.roles : fallback;
@@ -1457,7 +1462,9 @@ function renderEventDetailView(event, activities) {
                 <p class="page-subtitle">${event.description || ''}</p>
                 <div class="event-dates">${formatEventDates(event)}</div>
             </div>
-            <div class="flex gap-2"></div>
+            <div class="flex gap-2">
+                <button class="btn btn-outline" onclick="showEventsWithNeedsFromPlanning()">Show Events With Needs</button>
+            </div>
         </div>
 
         <div class="card mb-4">
