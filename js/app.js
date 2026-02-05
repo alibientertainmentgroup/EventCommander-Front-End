@@ -1451,16 +1451,7 @@ function renderEventDetailView(event, activities) {
                 <p class="page-subtitle">${event.description || ''}</p>
                 <div class="event-dates">${formatEventDates(event)}</div>
             </div>
-            <div class="flex gap-2">
-                ${isPrivileged() ? `
-                    <select class="form-select" style="width: auto;" onchange="updateEventStatus('${event.id}', this.value)">
-                        <option value="upcoming" ${event.status === 'upcoming' ? 'selected' : ''}>Upcoming</option>
-                        <option value="active" ${event.status === 'active' ? 'selected' : ''}>Active</option>
-                        <option value="completed" ${event.status === 'completed' ? 'selected' : ''}>Completed</option>
-                    </select>
-                    <button class="btn btn-outline" onclick="deleteEventAction('${event.id}')">Delete Event</button>
-                ` : ''}
-            </div>
+            <div class="flex gap-2"></div>
         </div>
 
         <div class="card mb-4">
