@@ -21,7 +21,8 @@ let appState = {
     inprocessProfile: null,
     inprocessStation: null,
     inprocessMessage: 'Google Sheet lookup not connected yet.',
-    showEventsWithNeeds: false
+    showEventsWithNeeds: false,
+    showActivitiesWithNeeds: false
 };
 
 function normalizeCapId(value) {
@@ -52,9 +53,9 @@ function toggleEventsWithNeeds() {
     renderCurrentView();
 }
 
-function showEventsWithNeedsFromPlanning() {
-    appState.showEventsWithNeeds = true;
-    switchView('events');
+function toggleActivitiesWithNeeds() {
+    appState.showActivitiesWithNeeds = !appState.showActivitiesWithNeeds;
+    renderCurrentView();
 }
 
 function getSupportRoles() {
@@ -1450,6 +1451,17 @@ async function selectEvent(eventId, targetView = 'dashboard') {
 function renderEventDetailView(event, activities) {
     const columns = ['Planning', 'Ready', 'In Progress', 'Completed'];
     const totals = getEventActivityTotals(event.id, activities);
+    const visibleActivities = appState.showActivitiesWithNeeds
+        ? activities.filter(a => {
+            const requiredPersonnel = normalizeRequiredList(a.support_personnel_required || []).length;
+            const requiredAssets = normalizeRequiredList(a.assets_required || []).length;
+            const assignedPersonnel = normalizeAssignmentEntries(a.assigned_personnel || [], 'personnel').length;
+            const assignedAssets = normalizeAssignmentEntries(a.assigned_assets || [], 'assets').length;
+            const needsPersonnel = requiredPersonnel > 0 && assignedPersonnel < requiredPersonnel;
+            const needsAssets = requiredAssets > 0 && assignedAssets < requiredAssets;
+            return needsPersonnel || needsAssets;
+        })
+        : activities;
     
     return `
         <div style="margin-bottom: 24px;">
@@ -1463,7 +1475,9 @@ function renderEventDetailView(event, activities) {
                 <div class="event-dates">${formatEventDates(event)}</div>
             </div>
             <div class="flex gap-2">
-                <button class="btn btn-outline" onclick="showEventsWithNeedsFromPlanning()">Show Events With Needs</button>
+                <button class="btn btn-outline" onclick="toggleActivitiesWithNeeds()">
+                    ${appState.showActivitiesWithNeeds ? 'Show All Activities' : 'Show Activities With Needs'}
+                </button>
             </div>
         </div>
 
@@ -1498,7 +1512,7 @@ function renderEventDetailView(event, activities) {
                 <div class="kanban-column" data-column="${column}" ondragover="onKanbanDragOver(event)" ondrop="onKanbanDrop(event)">
                     <div class="kanban-header">${column.toUpperCase()}</div>
                 <div class="kanban-items" data-column="${column}" ondragover="onKanbanDragOver(event)" ondrop="onKanbanDrop(event)">
-                        ${sortActivities(activities.filter(a => a.column === column), column).map(activity => {
+                        ${sortActivities(visibleActivities.filter(a => a.column === column), column).map(activity => {
                             const complete = isActivityFullyAssigned(activity);
                             const completeStyle = complete ? 'background: rgba(110, 231, 183, 0.18); border-color: rgba(110, 231, 183, 0.8); box-shadow: 0 0 0 1px rgba(110, 231, 183, 0.45);' : '';
                             return `
