@@ -124,6 +124,14 @@ function renderEventsByStatus(status, events) {
 // ==================== EVENTS COMPONENTS ====================
 
 function renderEvents(events) {
+    const filteredEvents = appState.showEventsWithNeeds
+        ? events.filter(event => {
+            const totals = getEventActivityTotals(event.id, appState.activities || []);
+            const personnelNeed = totals.requiredPersonnel > 0 && totals.assignedPersonnel < totals.requiredPersonnel;
+            const assetNeed = totals.requiredAssets > 0 && totals.assignedAssets < totals.requiredAssets;
+            return personnelNeed || assetNeed;
+        })
+        : events;
     return `
         <div class="page-header">
             <div>
@@ -131,6 +139,9 @@ function renderEvents(events) {
             </div>
             <div class="flex gap-2" style="align-items:center;">
                 <label class="toggle-row toggle-switch" style="margin:0;">\n                    <input type="checkbox" ${appState.sandboxMode ? 'checked' : ''} onchange="toggleSandboxMode()">\n                    <span class="toggle-track"></span>\n                    <span class="toggle-label">Sandbox Mode</span>\n                </label>
+                <button class="btn btn-outline" onclick="toggleEventsWithNeeds()">
+                    ${appState.showEventsWithNeeds ? 'Show All Events' : 'Show Events With Needs'}
+                </button>
                 ${isPrivileged() ? `
                     <button class="btn btn-blue" onclick="openEventModal()">
                         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -144,13 +155,13 @@ function renderEvents(events) {
         </div>
 
         <div class="events-grid">
-            ${events.map(event => renderEventCard(event)).join('')}
+            ${filteredEvents.map(event => renderEventCard(event)).join('')}
         </div>
 
-        ${events.length === 0 ? `
+        ${filteredEvents.length === 0 ? `
             <div class="empty-state">
                 <div class="empty-state-icon">??</div>
-                <div class="empty-state-text">No events yet</div>
+                <div class="empty-state-text">${appState.showEventsWithNeeds ? 'No events with open needs' : 'No events yet'}</div>
             </div>
         ` : ''}
     `;

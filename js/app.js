@@ -20,7 +20,8 @@ let appState = {
     timelineDays: 1,
     inprocessProfile: null,
     inprocessStation: null,
-    inprocessMessage: 'Google Sheet lookup not connected yet.'
+    inprocessMessage: 'Google Sheet lookup not connected yet.',
+    showEventsWithNeeds: false
 };
 
 function normalizeCapId(value) {
@@ -44,6 +45,11 @@ function updateContextUI() {
     document.querySelectorAll('.nav-item[data-privileged="true"]').forEach(item => {
         item.style.display = isPrivileged() ? 'flex' : 'none';
     });
+}
+
+function toggleEventsWithNeeds() {
+    appState.showEventsWithNeeds = !appState.showEventsWithNeeds;
+    renderCurrentView();
 }
 
 function getSupportRoles() {
