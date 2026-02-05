@@ -2629,6 +2629,10 @@ function openActivityDetail(activityId, options = {}) {
                         <input type="time" class="form-input" id="assignPersonnelEndTime" placeholder="End">
                         <button type="button" class="btn btn-outline btn-small" onclick="assignPersonnelToActivityAction('${activityId}')">Assign</button>
                     </div>
+                    <label class="form-label" style="margin: 0; display:flex; align-items:center; gap:8px;">
+                        <input type="checkbox" id="assignPersonnelUseActivityTime" onchange="toggleAssignPersonnelActivityTime('${activityId}')">
+                        Use activity time
+                    </label>
                 </div>
             </div>
             <div class="form-row">
@@ -2777,6 +2781,8 @@ async function assignPersonnelToActivityAction(activityId) {
     const roleSelect = document.getElementById('assignPersonnelRole');
     const startInput = document.getElementById('assignPersonnelStartTime');
     const endInput = document.getElementById('assignPersonnelEndTime');
+    const useActivityTime = document.getElementById('assignPersonnelUseActivityTime');
+    const activity = appState.activities.find(a => a.id === activityId);
     if (!select || !select.value) {
         alert('Select a staff member.');
         return;
@@ -2785,12 +2791,15 @@ async function assignPersonnelToActivityAction(activityId) {
         alert('Select a role.');
         return;
     }
+    if (useActivityTime && useActivityTime.checked && activity) {
+        startInput.value = activity.start_time || '';
+        endInput.value = activity.end_time || '';
+    }
     if (!startInput || !endInput || !startInput.value || !endInput.value) {
         alert('Select a start and end time.');
         return;
     }
 
-    const activity = appState.activities.find(a => a.id === activityId);
     const personId = String(select.value);
     const alreadyAssigned = getAssignedIds(activity ? activity.assigned_personnel : [], 'personnel')
         .includes(personId);
@@ -2846,6 +2855,28 @@ async function assignPersonnelToActivityAction(activityId) {
     } finally {
         hideLoading();
     }
+}
+
+function toggleAssignPersonnelActivityTime(activityId) {
+    const activity = appState.activities.find(a => a.id === activityId);
+    const checkbox = document.getElementById('assignPersonnelUseActivityTime');
+    const startInput = document.getElementById('assignPersonnelStartTime');
+    const endInput = document.getElementById('assignPersonnelEndTime');
+    if (!checkbox || !startInput || !endInput) return;
+    if (!checkbox.checked) {
+        startInput.disabled = false;
+        endInput.disabled = false;
+        return;
+    }
+    if (!activity || !activity.start_time || !activity.end_time) {
+        checkbox.checked = false;
+        alert('Set the activity start/end time first.');
+        return;
+    }
+    startInput.value = activity.start_time;
+    endInput.value = activity.end_time;
+    startInput.disabled = true;
+    endInput.disabled = true;
 }
 
 async function assignAssetToActivityAction(activityId) {
