@@ -8,6 +8,8 @@ let appState = {
     activities: [],
     assets: [],
     personnel: [],
+    stations: [],
+    checkins: [],
     locations: [],
     roster: [],
     roles: [],
@@ -23,6 +25,7 @@ let appState = {
     inprocessProfile: null,
     inprocessStation: null,
     inprocessMessage: 'Google Sheet lookup not connected yet.',
+    selectedInprocessingEvent: null,
     showEventsWithNeeds: false,
     showActivitiesWithNeeds: false
 };
@@ -334,13 +337,13 @@ function renderCurrentView() {
             if (appState.selectedEvent) {
                 const eventActivities = appState.activities.filter(a => a.event_id === appState.selectedEvent.id);
                 viewHtml = renderEventDetailView(appState.selectedEvent, eventActivities);
-                postRender = () => setupKanbanDragAndDrop();
+                postRender = () => { setupKanbanDragAndDrop(); loadEventStations(appState.selectedEvent.id); };
             } else {
                 viewHtml = renderEvents(appState.events);
             }
             break;
         case 'inprocessing':
-            viewHtml = renderInprocessing();
+            viewHtml = renderInprocessing(appState.events, appState.personnel, appState.stations, appState.checkins);
             break;
         case 'outprocessing':
             viewHtml = renderOutprocessing();
@@ -383,11 +386,221 @@ function renderCurrentView() {
             viewHtml = isPrivileged() ? renderLog() : renderNotAuthorized();
             break;
         case 'admin':
-            viewHtml = isAdmin() ? renderAdminPanel() : renderNotAuthorized();
+            if (isAdmin()) {
+                viewHtml = renderAdminPanel();
+                postRender = () => loadAllStations();
+            } else {
+                viewHtml = renderNotAuthorized();
+            }
             break;
     }
     contentArea.innerHTML = renderSandboxBanner() + viewHtml;
     if (postRender) postRender();
+}
+
+async function loadInprocessingStations(eventId) {
+    if (!eventId) {
+        const container = document.getElementById('inprocessingStationsContainer');
+        if (container) container.innerHTML = '<div class="empty-state"><div class="empty-state-text">Select an event</div></div>';
+        return;
+    }
+
+    showLoading();
+    try {
+        appState.selectedInprocessingEvent = eventId;
+        const stations = await getStations(eventId);
+        appState.stations = stations || [];
+
+        const checkinsArr = await Promise.all((stations || []).map(s => getCheckins(s.id)));
+        appState.checkins = (checkinsArr || []).flat();
+
+        const container = document.getElementById('inprocessingStationsContainer');
+        if (container) container.innerHTML = renderInprocessingStations(appState.stations, appState.personnel, appState.checkins);
+    } catch (error) {
+        console.error('Failed to load stations:', error);
+        alert('Failed to load stations');
+    } finally {
+        hideLoading();
+    }
+}
+
+async function loadAllStations() {
+    showLoading();
+    try {
+        const stations = await getAllStations();
+        appState.stations = stations || [];
+        const checkinsArr = await Promise.all((appState.stations || []).map(s => getCheckins(s.id)));
+        appState.checkins = (checkinsArr || []).flat();
+        // re-render admin panel list area if present
+        const adminList = document.getElementById('adminStationsList');
+        if (adminList) adminList.innerHTML = (appState.stations.length ? appState.stations.map(station => {
+            const evt = appState.events.find(e => e.id === station.event_id) || {};
+            return `
+                <div class="resource-item">
+                    <div>
+                        <div class="resource-name">${station.name}</div>
+                        <div class="resource-details">Event: ${evt.title || '—'}</div>
+                    </div>
+                    <div class="flex gap-2">
+                        <button class="btn btn-outline btn-small" onclick="openEditStationModal('${station.id.replace(/'/g, "\\'")}')">Edit</button>
+                        <button class="btn btn-ghost btn-small" onclick="deleteStationAction('${station.id.replace(/'/g, "\\'")}')">Delete</button>
+                    </div>
+                </div>
+            `;
+        }).join('') : '<div class="empty-state-text text-center">No stations configured.</div>');
+    } catch (error) {
+        console.error('Failed to load all stations:', error);
+    } finally {
+        hideLoading();
+    }
+}
+
+function openEditStationModal(stationId) {
+    const station = (appState.stations || []).find(s => s.id === stationId);
+    if (!station) return alert('Station not found');
+    const modalContent = `
+        <form id="editStationForm" onsubmit="saveEditedStation(event, '${stationId}')">
+            <div class="form-row">
+                <label class="form-label">Station Name</label>
+                <input type="text" class="form-input" id="editStationName" value="${(station.name||'').replace(/"/g,'&quot;')}" required>
+            </div>
+            <div class="form-row">
+                <label class="form-label">Description</label>
+                <textarea class="form-textarea" id="editStationDescription">${(station.description||'')}</textarea>
+            </div>
+            <div class="form-row">
+                <label class="form-label">Order</label>
+                <input type="number" class="form-input" id="editStationOrder" value="${station.station_order || 0}">
+            </div>
+        </form>
+    `;
+    const modalFooter = `
+        <button class="btn btn-blue" onclick="document.getElementById('editStationForm').requestSubmit()">SAVE</button>
+        <button class="btn btn-outline" onclick="closeModal()">CANCEL</button>
+    `;
+    showModal(createModal('EDIT STATION', modalContent, modalFooter));
+}
+
+async function saveEditedStation(e, stationId) {
+    e.preventDefault();
+    const updates = {
+        name: document.getElementById('editStationName').value,
+        description: document.getElementById('editStationDescription').value,
+        station_order: parseInt(document.getElementById('editStationOrder').value) || 0
+    };
+    showLoading();
+    closeModal();
+    try {
+        await updateStation(stationId, updates);
+        await loadAllStations();
+    } catch (error) {
+        console.error('Failed to update station:', error);
+        alert('Failed to update station');
+    } finally {
+        hideLoading();
+    }
+}
+
+async function deleteStationAction(stationId) {
+    if (!confirm('Delete this station?')) return;
+    showLoading();
+    try {
+        await deleteStation(stationId);
+        await loadAllStations();
+    } catch (error) {
+        console.error('Failed to delete station:', error);
+        alert('Failed to delete station');
+    } finally {
+        hideLoading();
+    }
+}
+
+async function checkInPersonnelAtStation(stationId, personnelId) {
+    showLoading();
+    try {
+        await checkInPersonnel(stationId, personnelId, currentUser ? currentUser.cap_id : '');
+        await loadInprocessingStations(appState.selectedInprocessingEvent);
+    } catch (error) {
+        console.error('Check-in failed:', error);
+        alert('Check-in failed');
+    } finally {
+        hideLoading();
+    }
+}
+
+// Helper to load stations in the Event Detail view
+async function loadEventStations(eventId) {
+    try {
+        const stations = await getStations(eventId);
+        appState.stations = stations || [];
+        const checkinsArr = await Promise.all((stations || []).map(s => getCheckins(s.id)));
+        appState.checkins = (checkinsArr || []).flat();
+        const container = document.getElementById('eventStationsList');
+        if (container) container.innerHTML = renderInprocessingStations(appState.stations, appState.personnel, appState.checkins);
+    } catch (error) {
+        console.error('Failed to load event stations:', error);
+    }
+}
+
+function openStationModal(eventId) {
+    const eventOptions = (appState.events || []).map(e => `<option value="${e.id}">${e.title}</option>`).join('');
+    const modalContent = `
+        <form id="stationForm" onsubmit="saveStation(event)">
+            ${!eventId ? `
+                <div class="form-row">
+                    <label class="form-label">Event</label>
+                    <select id="stationEventSelect" class="form-select" required>
+                        <option value="">Select event...</option>
+                        ${eventOptions}
+                    </select>
+                </div>
+            ` : ''}
+            <div class="form-row">
+                <label class="form-label">Station Name</label>
+                <input type="text" class="form-input" id="stationName" required>
+            </div>
+            <div class="form-row">
+                <label class="form-label">Description</label>
+                <textarea class="form-textarea" id="stationDescription"></textarea>
+            </div>
+            <div class="form-row">
+                <label class="form-label">Order</label>
+                <input type="number" class="form-input" id="stationOrder" value="0">
+            </div>
+        </form>
+    `;
+
+    const modalFooter = `
+        <button class="btn btn-blue" onclick="document.getElementById('stationForm').requestSubmit()">SAVE</button>
+        <button class="btn btn-outline" onclick="closeModal()">CANCEL</button>
+    `;
+
+    showModal(createModal('NEW STATION', modalContent, modalFooter));
+}
+
+async function saveStation(e, eventId) {
+    e.preventDefault();
+    const chosenEventId = eventId || (document.getElementById('stationEventSelect') ? document.getElementById('stationEventSelect').value : null);
+    if (!chosenEventId) return alert('Please select an event for the station.');
+    const stationData = {
+        event_id: chosenEventId,
+        name: document.getElementById('stationName').value,
+        description: document.getElementById('stationDescription').value,
+        station_order: parseInt(document.getElementById('stationOrder').value) || 0
+    };
+
+    showLoading();
+    closeModal();
+    try {
+        await createStation(stationData);
+        await loadAllStations();
+        if (eventId) await selectEvent(eventId, 'events');
+    } catch (error) {
+        console.error('Failed to create station:', error);
+        alert('Failed to create station');
+    } finally {
+        hideLoading();
+    }
 }
 
 async function switchView(viewName) {
@@ -1491,6 +1704,23 @@ function renderEventDetailView(event, activities) {
                     <div class="metric-value status-blue">${totals.assignedAssets} / ${totals.requiredAssets}</div>
                 </div>
             </div>
+        </div>
+
+        <div class="flex-between mb-4">
+            <h3 class="page-subtitle" style="font-size: 24px; font-family: 'Orbitron', monospace; color: var(--blue-secondary);">INPROCESSING STATIONS</h3>
+            ${isAdmin() ? `
+                <button class="btn btn-blue btn-small" onclick="openStationModal('${event.id}')">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="12" y1="5" x2="12" y2="19"></line>
+                        <line x1="5" y1="12" x2="19" y2="12"></line>
+                    </svg>
+                    ADD STATION
+                </button>
+            ` : ''}
+        </div>
+
+        <div class="resource-list mb-4" id="eventStationsList">
+            Loading stations...
         </div>
 
         <div class="flex-between mb-4">

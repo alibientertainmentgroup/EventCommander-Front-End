@@ -169,105 +169,106 @@ function renderEvents(events) {
 
 // ==================== INPROCESSING COMPONENTS ====================
 
-function renderInprocessing() {
-    const activeProfile = appState.inprocessProfile;
-    const activeCapId = activeProfile ? (typeof normalizeCapId === 'function' ? normalizeCapId(activeProfile.capId) : String(activeProfile.capId || '').trim()) : '';
-    const activeEntry = activeCapId
-        ? appState.roster.find(r => {
-            const rosterCap = typeof normalizeCapId === 'function'
-                ? normalizeCapId(r.cap_id || r.capId)
-                : String(r.cap_id || r.capId || '').trim();
-            return rosterCap === activeCapId && !r.signed_out_at;
-        })
-        : null;
-    const isSignedIn = !!activeEntry;
-    const isStudent = isSignedIn && activeEntry.role === 'student';
-    const stations = ['Forms Review', 'Medical', 'Inspection', 'Billeting', 'Supply', 'Complete Inprocessing'];
-    const inprocessAverage = calculateInprocessAverage(appState.roster);
+function renderInprocessing(events, personnel, stations, checkins) {
+    const eventOptions = events.map(e => 
+        `<option value="${e.id}">${e.title}</option>`
+    ).join('');
+
+    const profileHtml = (typeof appState !== 'undefined' && appState.inprocessProfile) ? renderInprocessingProfile(appState.inprocessProfile) : '';
+    const stationsHtml = (typeof appState !== 'undefined' && appState.inprocessProfile)
+        ? renderInprocessingStationsForProfile(stations || [], appState.inprocessProfile, checkins || [])
+        : '<div class="empty-state"><div class="empty-state-text">Select an event to view inprocessing stations</div></div>';
+
     return `
         <div class="page-header">
-            <div>
-                <h2 class="page-title">INPROCESSING</h2>
-                <p class="page-subtitle">Look up cadets by CAP ID and complete inprocessing steps.</p>
-            </div>
-            <div class="metrics-grid" style="grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));">
-                <div class="metric-card">
-                    <div class="metric-header">
-                        <svg class="metric-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <circle cx="12" cy="12" r="10"></circle>
-                            <path d="M12 6v6l4 2"></path>
-                        </svg>
-                        <div class="metric-value status-blue">${inprocessAverage.label}</div>
-                    </div>
-                    <div class="metric-label">Avg Inprocessing Time (Students)</div>
-                </div>
-            </div>
+            <h2 class="page-title">INPROCESSING</h2>
         </div>
 
-        <div class="inprocess-lookup">
-            <div class="form-row">
-                <label class="form-label">CAP ID</label>
-                <div class="tag-input-row">
-                    <input type="text" class="form-input cap-id-input" id="inprocessCapId" placeholder="Enter CAP ID" maxlength="6" inputmode="numeric">
-                    <button class="btn btn-blue" onclick="lookupInprocessingCadet()">GO</button>
-                    ${isSignedIn ? `<button class="btn btn-outline btn-small" onclick="resetInprocessingForActive()">Clear Inprocessing</button>` : ''}
-                </div>
-            </div>
-            <div class="form-row" style="display:flex; gap:12px; flex-wrap: wrap;">
-                ${activeProfile && !isSignedIn ? `
-                    <button class="btn btn-outline" onclick="signInInprocessing('staff')">Sign In Staff</button>
-                    <button class="btn btn-outline" onclick="signInInprocessing('student')">Sign In Student</button>
-                ` : ''}
-                ${activeProfile && isSignedIn ? `<div class="resource-details">Signed in.</div>` : ''}
-            </div>
-            ${!activeProfile ? `
-                <div class="resource-details">${appState.inprocessMessage || 'Google Sheet lookup not connected yet.'}</div>
-            ` : ''}
+        <div class="card mb-4">
+            <label class="form-label">Select Event</label>
+            <select class="form-select" id="inprocessingEventSelect" onchange="loadInprocessingStations(this.value)">
+                <option value="">Choose an event...</option>
+                ${eventOptions}
+            </select>
         </div>
 
-        ${isStudent ? `
-            <div class="profile-section">
-                <div class="resource-header status-blue">STATIONS</div>
-                <div class="station-grid">
-                    ${stations.map(name => {
-                        const status = activeEntry?.stations?.[name] || { status: 'pending', flagged: false };
-                        const cls = status.status === 'complete' ? 'station-complete' : (status.flagged ? 'station-flag' : '');
-                        return `<button class="btn btn-outline station-btn ${cls}" onclick="setInprocessStation('${name}')">${name}</button>`;
-                    }).join('')}
-                </div>
-            </div>
+        ${profileHtml}
 
-            ${appState.inprocessStation ? (() => {
-                const hasUnresolvedFlags = ((activeEntry?.flags || []).some(f => !f.resolved)) ||
-                    Object.values(activeEntry?.stations || {}).some(s => s?.flagged);
+        <div id="inprocessingStationsContainer">
+            ${stationsHtml}
+        </div>
+    `;
+}
+
+function renderInprocessingStations(stations, personnel, checkins) {
+    if (stations.length === 0) {
+        return '<div class="empty-state"><div class="empty-state-text">No stations configured for this event</div></div>';
+    }
+
+    return `
+        <div class="space-y-4">
+            ${stations.map(station => {
+                const stationCheckins = checkins.filter(c => c.station_id === station.id);
+                const checkedInIds = stationCheckins.map(c => c.personnel_id);
+                
                 return `
-                <div class="profile-section">
-                    <div class="resource-header status-blue">${appState.inprocessStation}</div>
-                    <div class="resource-details">Station details will populate here.</div>
-                    <div class="form-row" style="display:flex; gap:12px; flex-wrap: wrap; margin-top: 12px;">
-                        ${appState.inprocessStation !== 'Complete Inprocessing' ? `
-                            <button class="btn btn-blue" onclick="completeStation()">Complete</button>
-                            <button class="btn btn-flag" onclick="openFlagModal()">Flag</button>
-                        ` : `
-                            ${hasUnresolvedFlags ? '' : `<button class="btn btn-blue" onclick="completeStation()">Complete</button>`}
-                            <button class="btn btn-flag" onclick="openFlagModal()">Flag</button>
-                        `}
+                    <div class="card">
+                        <h3 class="text-xl font-bold text-blue-400 mb-2">${station.name}</h3>
+                        <p class="text-slate-400 text-sm mb-4">${station.description || ''}</p>
+                        
+                        <div class="flex gap-2 mb-4">
+                            <span class="badge badge-blue">${stationCheckins.length} checked in</span>
+                        </div>
+
+                        <div class="resource-list">
+                            ${personnel.map(person => {
+                                const isCheckedIn = checkedInIds.includes(person.id);
+                                return `
+                                    <div class="resource-item flex-between">
+                                        <div>
+                                            <div class="resource-name">${person.name}</div>
+                                            <div class="resource-details">CAP ${person.cap_id}</div>
+                                        </div>
+                                        ${isCheckedIn ? 
+                                            `<span class="badge" style="background: rgba(34, 197, 94, 0.2); color: var(--green);">✓ Checked In</span>` :
+                                            `<button class="btn btn-small btn-blue" onclick="checkInPersonnelAtStation('${station.id}', '${person.id}')">Check In</button>`
+                                        }
+                                    </div>
+                                `;
+                            }).join('')}
+                        </div>
                     </div>
-                    ${appState.inprocessStation === 'Complete Inprocessing' ? `
-                        <div class="resource-details" style="margin-top: 8px;">Complete only after all stations and flags are resolved.</div>
-                        ${renderFlagSummary(activeEntry)}
-                    ` : ''}
-                </div>
-            `;
-            })() : ''}
-        ` : ''}
+                `;
+            }).join('')}
+        </div>
+    `;
+}
 
-        ${isSignedIn && !isStudent ? `
-            <div class="resource-details" style="margin-top: 8px;">Staff signed in. Stations apply to students only.</div>
-        ` : ''}
+function renderInprocessingStationsForProfile(stations, profile, checkins) {
+    if (!stations || stations.length === 0) {
+        return '<div class="empty-state"><div class="empty-state-text">No stations configured for this event</div></div>';
+    }
 
-        ${activeProfile ? renderInprocessingProfile(activeProfile) : ''}
-
+    return `
+        <div class="space-y-4">
+            ${stations.map(station => {
+                const stationCheckins = (checkins || []).filter(c => c.station_id === station.id && String(c.personnel_id) === String(profile.capId));
+                const isChecked = stationCheckins.length > 0;
+                return `
+                    <div class="card">
+                        <div class="flex-between">
+                            <div>
+                                <div class="resource-name">${station.name}</div>
+                                <div class="resource-details">${station.description || ''}</div>
+                            </div>
+                            <div>
+                                ${isChecked ? `<span class="badge" style="background: rgba(34, 197, 94, 0.2); color: var(--green);">✓ Checked In</span>` : `<button class="btn btn-blue" onclick="checkInPersonnelAtStation('${station.id}', '${profile.capId}')">Check In</button>`}
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join('')}
+        </div>
     `;
 }
 
@@ -962,6 +963,18 @@ function renderAdminPanel() {
             <div>
                 <h2 class="page-title">ADMIN</h2>
                 <p class="page-subtitle">Manage roles and administrative tools.</p>
+            </div>
+        </div>
+
+        <div class="card" style="margin-top:16px;">
+            <div class="flex-between mb-2">
+                <h3 class="page-subtitle">INPROCESSING STATIONS</h3>
+                <div>
+                    <button class="btn btn-blue btn-small" onclick="openStationModal('')">Add Station</button>
+                </div>
+            </div>
+            <div id="adminStationsList" class="resource-list">
+                Loading stations...
             </div>
         </div>
         <div class="card" style="max-width: 520px; width: 100%; margin-bottom: 16px;">

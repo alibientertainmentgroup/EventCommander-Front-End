@@ -1885,6 +1885,165 @@ window.assignAssetToActivity = assignAssetToActivity;
 window.unassignPersonnel = unassignPersonnel;
 window.unassignAsset = unassignAsset;
 
+// ==================== INPROCESSING STATION FUNCTIONS ====================
+
+async function getStations(eventId) {
+    try {
+        if (isMockMode()) {
+            const store = getMockStore();
+            return (store.events || []).length ? filterBySandbox((store.inprocessing_stations || []).filter(s => s.event_id === eventId)) : [];
+        }
+        const { data, error } = await supabaseClient
+            .from('inprocessing_stations')
+            .select('*')
+            .eq('event_id', eventId)
+            .order('station_order', { ascending: true });
+        if (error) throw error;
+        return data || [];
+    } catch (error) {
+        console.error('Get stations error:', error);
+        return [];
+    }
+}
+
+async function getAllStations() {
+    try {
+        if (isMockMode()) {
+            const store = getMockStore();
+            return store.inprocessing_stations || [];
+        }
+        const { data, error } = await supabaseClient
+            .from('inprocessing_stations')
+            .select('*')
+            .order('event_id', { ascending: true })
+            .order('station_order', { ascending: true });
+        if (error) throw error;
+        return data || [];
+    } catch (error) {
+        console.error('Get all stations error:', error);
+        return [];
+    }
+}
+
+window.getAllStations = getAllStations;
+
+async function createStation(stationData) {
+    try {
+        if (isMockMode()) {
+            const store = getMockStore();
+            const record = { id: makeId(), ...stationData, created_at: new Date().toISOString(), sandbox_mode: currentSandboxFlag() };
+            store.inprocessing_stations = store.inprocessing_stations || [];
+            store.inprocessing_stations.push(record);
+            setMockStore(store);
+            return record;
+        }
+        const { data, error } = await supabaseClient
+            .from('inprocessing_stations')
+            .insert([stationData])
+            .select()
+            .single();
+        if (error) throw error;
+        return data;
+    } catch (error) {
+        console.error('Create station error:', error);
+        throw error;
+    }
+}
+
+async function updateStation(id, updates) {
+    try {
+        if (isMockMode()) {
+            const store = getMockStore();
+            store.inprocessing_stations = store.inprocessing_stations || [];
+            const idx = store.inprocessing_stations.findIndex(s => s.id === id);
+            if (idx === -1) throw new Error('Station not found');
+            store.inprocessing_stations[idx] = { ...store.inprocessing_stations[idx], ...updates };
+            setMockStore(store);
+            return store.inprocessing_stations[idx];
+        }
+        const { data, error } = await supabaseClient
+            .from('inprocessing_stations')
+            .update(updates)
+            .eq('id', id)
+            .select()
+            .single();
+        if (error) throw error;
+        return data;
+    } catch (error) {
+        console.error('Update station error:', error);
+        throw error;
+    }
+}
+
+async function deleteStation(id) {
+    try {
+        if (isMockMode()) {
+            const store = getMockStore();
+            store.inprocessing_stations = (store.inprocessing_stations || []).filter(s => s.id !== id);
+            setMockStore(store);
+            return true;
+        }
+        const { error } = await supabaseClient
+            .from('inprocessing_stations')
+            .delete()
+            .eq('id', id);
+        if (error) throw error;
+        return true;
+    } catch (error) {
+        console.error('Delete station error:', error);
+        throw error;
+    }
+}
+
+async function checkInPersonnel(stationId, personnelId, checkedInBy) {
+    try {
+        if (isMockMode()) {
+            const store = getMockStore();
+            store.inprocessing_checkins = store.inprocessing_checkins || [];
+            const record = { id: makeId(), station_id: stationId, personnel_id: personnelId, checked_in_by: checkedInBy || '', checked_in_at: new Date().toISOString(), sandbox_mode: currentSandboxFlag() };
+            store.inprocessing_checkins.push(record);
+            setMockStore(store);
+            return record;
+        }
+        const { data, error } = await supabaseClient
+            .from('inprocessing_checkins')
+            .insert([{ station_id: stationId, personnel_id: personnelId, checked_in_by: checkedInBy }])
+            .select()
+            .single();
+        if (error) throw error;
+        return data;
+    } catch (error) {
+        console.error('Check in personnel error:', error);
+        throw error;
+    }
+}
+
+async function getCheckins(stationId) {
+    try {
+        if (isMockMode()) {
+            const store = getMockStore();
+            return (store.inprocessing_checkins || []).filter(c => c.station_id === stationId);
+        }
+        const { data, error } = await supabaseClient
+            .from('inprocessing_checkins')
+            .select('*')
+            .eq('station_id', stationId);
+        if (error) throw error;
+        return data || [];
+    } catch (error) {
+        console.error('Get checkins error:', error);
+        return [];
+    }
+}
+
+// expose inprocessing functions
+window.getStations = getStations;
+window.createStation = createStation;
+window.updateStation = updateStation;
+window.deleteStation = deleteStation;
+window.checkInPersonnel = checkInPersonnel;
+window.getCheckins = getCheckins;
+
 
 
 
