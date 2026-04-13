@@ -46,6 +46,14 @@ function renderDashboard(events, personnel, assets) {
     return renderSchedule(getUserSchedule());
 }
 
+function renderStatusIndicator() {
+    const pending = appState.pendingCount || 0;
+    const text = appState.isOnline ? '🟢 Online' : `🔴 Offline${pending ? ` - ${pending} pending` : ''}`;
+    const cls = appState.isOnline ? 'status-online' : 'status-offline';
+    const button = pending ? `<button class="btn btn-outline btn-small" style="margin-left:8px;" onclick="syncPendingNow()">Sync Now</button>` : '';
+    return `<div id="connectionIndicator" class="${cls}" style="position:fixed; top:12px; right:12px; z-index:9999; padding:6px 10px; border-radius:8px; font-weight:600; background:${appState.isOnline ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.12)'}; color:${appState.isOnline ? '#16a34a' : '#dc2626'}; display:flex; align-items:center;">${text}${button}</div>`;
+}
+
 
 function renderAdminHome(events) {
     return `
@@ -179,6 +187,52 @@ function renderInprocessing(events, personnel, stations, checkins) {
         ? renderInprocessingStationsForProfile(stations || [], appState.inprocessProfile, checkins || [])
         : '<div class="empty-state"><div class="empty-state-text">Select an event to view inprocessing stations</div></div>';
 
+    const approvalWarning = appState.approvalWarning ? `
+        <div class="warning-banner" style="background: rgba(255,165,0,0.1); border:1px solid rgba(255,165,0,0.6); padding:12px; margin-top:12px;">
+            <div class="resource-name">⚠️ APPROVAL MISSING</div>
+            <div class="resource-details">Unit Approved: ${appState.approvalWarning.unitApproved || 'N/A'}</div>
+            <div class="resource-details">Parent Approved: ${appState.approvalWarning.parentApproved || 'N/A'}</div>
+            <div class="flex gap-2" style="margin-top:8px;">
+                <button class="btn btn-blue btn-small" onclick="proceedApprovalBypass()">Proceed Anyway</button>
+                <button class="btn btn-outline btn-small" onclick="cancelApprovalBypass()">Cancel</button>
+            </div>
+        </div>
+    ` : '';
+
+    const manualPrompt = appState.inprocessMissingCapId && !appState.manualEntryOpen ? `
+        <div class="card" style="margin-top:12px;">
+            <div class="resource-name">CAP ID not found in registration.</div>
+            <div class="resource-details">Add manually?</div>
+            <button class="btn btn-blue btn-small" style="margin-top:8px;" onclick="openManualEntry()">Add Person</button>
+        </div>
+    ` : '';
+
+    const manualForm = appState.manualEntryOpen ? `
+        <div class="card" style="margin-top:12px;">
+            <div class="resource-name">Add Person Manually</div>
+            <form onsubmit="saveManualEntry(event)">
+                <div class="form-row"><label class="form-label">CAP ID</label><input id="manualCapId" class="form-input" value="${appState.inprocessMissingCapId || ''}" required></div>
+                <div class="form-row"><label class="form-label">Full Name</label><input id="manualFullName" class="form-input" required></div>
+                <div class="form-row"><label class="form-label">Rank</label><input id="manualRank" class="form-input"></div>
+                <div class="form-row"><label class="form-label">Member Type</label>
+                    <select id="manualMemberType" class="form-select">
+                        <option value="Cadet">Cadet</option>
+                        <option value="Senior">Senior</option>
+                    </select>
+                </div>
+                <div class="form-row"><label class="form-label">Shirt Size</label><input id="manualShirtSize" class="form-input"></div>
+                <div class="form-row"><label class="form-label">Cell Phone</label><input id="manualCellPhone" class="form-input"></div>
+                <div class="form-row"><label class="form-label">Emergency Contact Name</label><input id="manualEmergName" class="form-input"></div>
+                <div class="form-row"><label class="form-label">Emergency Contact Phone</label><input id="manualEmergPhone" class="form-input"></div>
+                <div class="form-row"><label class="form-label">Email</label><input id="manualEmail" class="form-input"></div>
+                <div class="form-row flex gap-2">
+                    <button class="btn btn-blue" type="submit">Save</button>
+                    <button class="btn btn-outline" type="button" onclick="cancelManualEntry()">Cancel</button>
+                </div>
+            </form>
+        </div>
+    ` : '';
+
     return `
         <div class="page-header">
             <h2 class="page-title">INPROCESSING</h2>
@@ -193,6 +247,9 @@ function renderInprocessing(events, personnel, stations, checkins) {
         </div>
 
         ${profileHtml}
+        ${approvalWarning}
+        ${manualPrompt}
+        ${manualForm}
 
         <div id="inprocessingStationsContainer">
             ${stationsHtml}
@@ -298,6 +355,7 @@ function renderOutprocessing() {
                 <div class="tag-input-row">
                     <input type="text" class="form-input cap-id-input" id="inprocessCapId" placeholder="Enter CAP ID" maxlength="6" inputmode="numeric">
                     <button class="btn btn-blue" onclick="lookupInprocessingCadet()">GO</button>
+                    <button class="btn btn-outline btn-small" onclick="resetScannerReady()">Next Person</button>
                 </div>
             </div>
             <div class="form-row" style="display:flex; gap:12px; flex-wrap: wrap;">
@@ -958,26 +1016,29 @@ function renderAdminPanel() {
     const roles = getSupportRoles();
     const accessRoles = ['user', 'staff', 'admin'];
     const signedIn = appState.roster.filter(r => !r.signed_out_at);
-    return `
-        <div class="page-header">
-            <div>
-                <h2 class="page-title">ADMIN</h2>
-                <p class="page-subtitle">Manage roles and administrative tools.</p>
-            </div>
-        </div>
+    const eventLabel = appState.selectedEvent ? appState.selectedEvent.title : 'Select an event';
+    const activeTab = appState.adminTab || 'roles';
 
-        <div class="card" style="margin-top:16px;">
-            <div class="flex-between mb-2">
-                <h3 class="page-subtitle">INPROCESSING STATIONS</h3>
-                <div>
-                    <button class="btn btn-blue btn-small" onclick="openStationModal('')">Add Station</button>
-                </div>
-            </div>
-            <div id="adminStationsList" class="resource-list">
-                Loading stations...
-            </div>
+    const tabs = [
+        { id: 'roles', label: 'Roles' },
+        { id: 'user', label: 'User Access' },
+        { id: 'signed', label: 'Signed In' },
+        { id: 'stations', label: 'Stations' },
+        { id: 'uploads', label: 'Upload Data' },
+    ];
+
+    const tabsHtml = `
+        <div class="admin-tabs" style="display:flex; gap:8px; margin:12px 0 16px 0; flex-wrap: wrap;">
+            ${tabs.map(t => `
+                <button class="nav-item ${activeTab === t.id ? 'active' : ''}" style="flex:0 0 auto;" onclick="setAdminTab('${t.id}')">
+                    <span class="nav-label">${t.label}</span>
+                </button>
+            `).join('')}
         </div>
-        <div class="card" style="max-width: 520px; width: 100%; margin-bottom: 16px;">
+    `;
+
+    const rolesSection = `
+        <div class="card" style="max-width: 520px; width: 100%; margin-top: 12px;">
             <div class="form-row">
                 <label class="form-label">Roles</label>
                 <div class="tag-input-row">
@@ -994,8 +1055,10 @@ function renderAdminPanel() {
                 `).join('')}
             </div>
         </div>
+    `;
 
-        <div class="card" style="max-width: 760px; width: 100%;">
+    const userAccessSection = `
+        <div class="card" style="max-width: 760px; width: 100%; margin-bottom: 16px;">
             <div class="form-row">
                 <label class="form-label">User Access</label>
                 <div class="tag-input-row">
@@ -1006,7 +1069,12 @@ function renderAdminPanel() {
                     <button class="btn btn-blue btn-small" onclick="adminSetUserRole()">Set Role</button>
                 </div>
             </div>
-            <div class="resource-header status-blue" style="margin-top: 8px;">Signed In</div>
+        </div>
+    `;
+
+    const signedInSection = `
+        <div class="card" style="max-width: 760px; width: 100%; margin-bottom: 16px;">
+            <div class="resource-header status-blue" style="margin-top: 8px;">Signed In (Current Event)</div>
             <div class="resource-list">
                 ${signedIn.length ? signedIn.map(entry => {
                     const role = getUserRoleForCapId(entry.capId);
@@ -1031,6 +1099,100 @@ function renderAdminPanel() {
                 }).join('') : '<div class="empty-state-text text-center">No one currently signed in.</div>'}
             </div>
         </div>
+    `;
+
+    const stationsSection = `
+        <div class="card" style="margin-top:16px;">
+            <div class="flex-between mb-2">
+                <h3 class="page-subtitle">INPROCESSING STATIONS</h3>
+                <div>
+                    <button class="btn btn-blue btn-small" onclick="openStationModal('')">Add Station</button>
+                </div>
+            </div>
+            <div id="adminStationsList" class="resource-list">
+                Loading stations...
+            </div>
+        </div>
+    `;
+
+    const uploadsSection = `
+        <div class="card" style="margin-top:16px;">
+            <div class="flex-between mb-2">
+                <h3 class="page-subtitle">UPLOAD REGISTRATIONS</h3>
+                <div class="resource-details" id="registrationUploadStatus"></div>
+            </div>
+            <div class="form-row">
+                <label class="form-label">.xlsx File</label>
+                <input type="file" class="form-input" id="registrationUploadFile" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
+            </div>
+            <div class="form-row">
+                <button class="btn btn-blue btn-small" onclick="handleRegistrationUpload()">Upload</button>
+            </div>
+            <div class="resource-details" id="registrationUploadMessage"></div>
+        </div>
+
+        <div class="card" style="margin-top:16px;">
+            <div class="flex-between mb-2">
+                <h3 class="page-subtitle">UPLOAD ACCOMMODATIONS</h3>
+                <div class="resource-details" id="accommodationsUploadStatus"></div>
+            </div>
+            <div class="form-row">
+                <label class="form-label">.xlsx File</label>
+                <input type="file" class="form-input" id="accommodationsUploadFile" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
+            </div>
+            <div class="form-row">
+                <button class="btn btn-blue btn-small" onclick="handleAccommodationsUpload()">Upload</button>
+            </div>
+            <div class="resource-details" id="accommodationsUploadMessage"></div>
+        </div>
+
+        <div class="card" style="margin-top:16px;">
+            <div class="flex-between mb-2">
+                <h3 class="page-subtitle">UPLOAD ALLERGIES</h3>
+                <div class="resource-details" id="allergiesUploadStatus"></div>
+            </div>
+            <div class="form-row">
+                <label class="form-label">.xlsx File</label>
+                <input type="file" class="form-input" id="allergiesUploadFile" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
+            </div>
+            <div class="form-row">
+                <button class="btn btn-blue btn-small" onclick="handleAllergiesUpload()">Upload</button>
+            </div>
+            <div class="resource-details" id="allergiesUploadMessage"></div>
+        </div>
+    `;
+
+    let body = '';
+    switch (activeTab) {
+        case 'roles':
+            body = rolesSection;
+            break;
+        case 'user':
+            body = userAccessSection;
+            break;
+        case 'signed':
+            body = signedInSection;
+            break;
+        case 'stations':
+            body = stationsSection;
+            break;
+        case 'uploads':
+            body = uploadsSection;
+            break;
+        default:
+            body = rolesSection;
+    }
+
+    return `
+        <div class="page-header">
+            <div>
+                <h2 class="page-title">ADMIN</h2>
+                <p class="page-subtitle">${eventLabel}</p>
+            </div>
+        </div>
+
+        ${tabsHtml}
+        ${body}
     `;
 }
 

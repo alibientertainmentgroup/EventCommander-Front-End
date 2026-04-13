@@ -1173,6 +1173,162 @@ async function addRosterEntry(entry) {
     }
 }
 
+async function replaceRosterForEvent(eventId, rows) {
+    if (!eventId) throw new Error('Event ID is required');
+    if (!Array.isArray(rows)) throw new Error('Rows must be an array');
+    const withSandbox = rows.map(r => ({ ...r, event_id: eventId, sandbox_mode: currentSandboxFlag() }));
+
+    if (isMockMode()) {
+        const store = getMockStore();
+        store.roster = (store.roster || []).filter(r => !(r.event_id === eventId && !!r.sandbox_mode === currentSandboxFlag()));
+        withSandbox.forEach(r => store.roster.push({ id: makeId(), ...r }));
+        setMockStore(store);
+        return { count: withSandbox.length };
+    }
+
+    // Delete existing roster for the event + sandbox flag
+    const { error: deleteError } = await supabaseClient
+        .from('roster')
+        .delete()
+        .eq('event_id', eventId)
+        .eq('sandbox_mode', currentSandboxFlag());
+    if (deleteError) throw deleteError;
+
+    // Insert in chunks to avoid payload limits
+    const chunkSize = 500;
+    for (let i = 0; i < withSandbox.length; i += chunkSize) {
+        const chunk = withSandbox.slice(i, i + chunkSize).map(normalizeRosterPayload);
+        const { error: insertError } = await supabaseClient
+            .from('roster')
+            .insert(chunk);
+        if (insertError) throw insertError;
+    }
+
+    return { count: withSandbox.length };
+}
+
+async function applyRosterProfileUpdates(eventId, updates) {
+    if (!eventId) throw new Error('Event ID is required');
+    if (!Array.isArray(updates)) throw new Error('Updates must be an array');
+
+    if (isMockMode()) {
+        const store = getMockStore();
+        store.roster = (store.roster || []).map(entry => {
+            const match = updates.find(u => String(u.cap_id) === String(entry.cap_id) && entry.event_id === eventId && !!entry.sandbox_mode === currentSandboxFlag());
+            if (!match) return entry;
+            return { ...entry, profile: match.profile };
+        });
+        setMockStore(store);
+        return;
+    }
+
+    for (const update of updates) {
+        const payload = { profile: update.profile };
+        const { error } = await supabaseClient
+            .from('roster')
+            .update(payload)
+            .eq('event_id', eventId)
+            .eq('cap_id', update.cap_id)
+            .eq('sandbox_mode', currentSandboxFlag());
+        if (error) throw error;
+    }
+}
+
+// Event upload tables (no sandbox flag)
+async function uploadRegistrations(eventId, data) {
+    if (!eventId) throw new Error('Event ID is required');
+    if (!Array.isArray(data)) throw new Error('Data must be an array');
+    if (isMockMode()) {
+        const store = getMockStore();
+        store.event_roster = (store.event_roster || []).filter(r => r.event_id !== eventId);
+        data.forEach(r => store.event_roster.push({ id: makeId(), ...r, event_id: eventId }));
+        setMockStore(store);
+        return data.length;
+    }
+    await supabaseClient.from('event_roster').delete().eq('event_id', eventId);
+    const { error } = await supabaseClient.from('event_roster').insert(data.map(r => ({ ...r, event_id: eventId })));
+    if (error) throw error;
+    return data.length;
+}
+
+async function uploadAccommodations(eventId, data) {
+    if (!eventId) throw new Error('Event ID is required');
+    if (!Array.isArray(data)) throw new Error('Data must be an array');
+    if (isMockMode()) {
+        const store = getMockStore();
+        store.event_accommodations = (store.event_accommodations || []).filter(r => r.event_id !== eventId);
+        data.forEach(r => store.event_accommodations.push({ id: makeId(), ...r, event_id: eventId }));
+        setMockStore(store);
+        return data.length;
+    }
+    await supabaseClient.from('event_accommodations').delete().eq('event_id', eventId);
+    const { error } = await supabaseClient.from('event_accommodations').insert(data.map(r => ({ ...r, event_id: eventId })));
+    if (error) throw error;
+    return data.length;
+}
+
+async function uploadAllergies(eventId, data) {
+    if (!eventId) throw new Error('Event ID is required');
+    if (!Array.isArray(data)) throw new Error('Data must be an array');
+    if (isMockMode()) {
+        const store = getMockStore();
+        store.event_allergies = (store.event_allergies || []).filter(r => r.event_id !== eventId);
+        data.forEach(r => store.event_allergies.push({ id: makeId(), ...r, event_id: eventId }));
+        setMockStore(store);
+        return data.length;
+    }
+    await supabaseClient.from('event_allergies').delete().eq('event_id', eventId);
+    const { error } = await supabaseClient.from('event_allergies').insert(data.map(r => ({ ...r, event_id: eventId })));
+    if (error) throw error;
+    return data.length;
+}
+
+async function getEventProfile(eventId, capId) {
+    if (!eventId || !capId) return { roster: null, accommodations: [], allergies: [] };
+    if (isMockMode()) {
+        const store = getMockStore();
+        const roster = (store.event_roster || []).find(r => r.event_id === eventId && String(r.cap_id) === String(capId)) || null;
+        const accommodations = (store.event_accommodations || []).filter(r => r.event_id === eventId && String(r.cap_id) === String(capId));
+        const allergies = (store.event_allergies || []).filter(r => r.event_id === eventId && String(r.cap_id) === String(capId));
+        return { roster, accommodations, allergies };
+    }
+    try {
+        const [{ data: roster }, { data: accommodations }, { data: allergies }] = await Promise.all([
+            supabaseClient.from('event_roster').select('*').eq('event_id', eventId).eq('cap_id', capId).single().throwOnError(false),
+            supabaseClient.from('event_accommodations').select('*').eq('event_id', eventId).eq('cap_id', capId),
+            supabaseClient.from('event_allergies').select('*').eq('event_id', eventId).eq('cap_id', capId)
+        ]);
+        return {
+            roster: roster || null,
+            accommodations: accommodations || [],
+            allergies: allergies || []
+        };
+    } catch (error) {
+        console.error('Get event profile error:', error);
+        return { roster: null, accommodations: [], allergies: [] };
+    }
+}
+
+async function addEventRosterEntry(eventId, entry) {
+    if (!eventId) throw new Error('Event ID is required');
+    if (!entry || !entry.cap_id) throw new Error('CAP ID is required');
+    if (isMockMode()) {
+        const store = getMockStore();
+        const record = { id: makeId(), event_id: eventId, ...entry };
+        store.event_roster = store.event_roster || [];
+        store.event_roster.push(record);
+        setMockStore(store);
+        return record;
+    }
+    const { data, error } = await supabaseClient
+        .from('event_roster')
+        .insert([{ event_id: eventId, ...entry }])
+        .select()
+        .single();
+    if (error) throw error;
+    return data;
+}
+
 async function updateRosterEntry(entry) {
     try {
         if (isMockMode()) {
@@ -1865,6 +2021,13 @@ window.getRoles = getRoles;
 window.getLogs = getLogs;
 window.addLogEntry = addLogEntry;
 window.clearLogs = clearLogs;
+window.replaceRosterForEvent = replaceRosterForEvent;
+window.applyRosterProfileUpdates = applyRosterProfileUpdates;
+window.uploadRegistrations = uploadRegistrations;
+window.uploadAccommodations = uploadAccommodations;
+window.uploadAllergies = uploadAllergies;
+window.getEventProfile = getEventProfile;
+window.addEventRosterEntry = addEventRosterEntry;
 window.pushMockDataToSupabase = pushMockDataToSupabase;
 window.getSupportTickets = getSupportTickets;
 window.addSupportTicket = addSupportTicket;

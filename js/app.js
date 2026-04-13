@@ -27,7 +27,15 @@ let appState = {
     inprocessMessage: 'Google Sheet lookup not connected yet.',
     selectedInprocessingEvent: null,
     showEventsWithNeeds: false,
-    showActivitiesWithNeeds: false
+    showActivitiesWithNeeds: false,
+    adminTab: 'roles',
+    inprocessMissingCapId: '',
+    manualEntryOpen: false,
+    approvalWarning: null,
+    isOnline: navigator.onLine,
+    pendingCount: 0,
+    syncingPending: false,
+    offlineCached: false
 };
 
 function normalizeCapId(value) {
@@ -46,7 +54,7 @@ function updateContextUI() {
 
     const adminItem = document.querySelector('.nav-item[data-view="admin"]');
     if (adminItem) {
-        adminItem.style.display = isAdmin() ? 'flex' : 'none';
+        adminItem.style.display = isAdmin() && appState.selectedEvent ? 'flex' : 'none';
     }
     document.querySelectorAll('.nav-item[data-privileged="true"]').forEach(item => {
         item.style.display = isPrivileged() ? 'flex' : 'none';
@@ -82,6 +90,7 @@ function renderSandboxBanner() {
 document.addEventListener('DOMContentLoaded', async () => {
     console.log('🚀 CAP Event System starting...');
     appState.sandboxMode = localStorage.getItem('cap-event-sandbox-mode') === 'true';
+    setupConnectionMonitoring();
     
     // Initialize Supabase
     if (!initSupabase()) {
@@ -170,7 +179,11 @@ function handleLogout() {
         locations: [],
         selectedEvent: null,
         timelineDate: null,
-        timelineDays: 1
+        timelineDays: 1,
+        adminTab: 'roles',
+        inprocessMissingCapId: '',
+        manualEntryOpen: false,
+        approvalWarning: null
     };
     updateContextUI();
 }
@@ -240,6 +253,22 @@ async function loadAllData() {
         appState.users = users;
         appState.logs = filterSandbox(logs);
         appState.supportTickets = filterSandbox(supportTickets);
+
+        if (appState.selectedEvent && appState.isOnline && window.offlineStore) {
+            try {
+                const accommodations = await (typeof getEventAccommodations === 'function' ? getEventAccommodations(appState.selectedEvent.id) : []);
+                const allergies = await (typeof getEventAllergies === 'function' ? getEventAllergies(appState.selectedEvent.id) : []);
+                await offlineStore.cacheEventData(appState.selectedEvent.id, {
+                    roster: appState.roster,
+                    accommodations,
+                    allergies,
+                    stations: appState.stations || []
+                });
+                appState.offlineCached = true;
+            } catch (err) {
+                console.warn('Cache event data failed:', err);
+            }
+        }
 
         if (isPrivileged()) {
             await syncAllDriversForActivities();
@@ -344,6 +373,10 @@ function renderCurrentView() {
             break;
         case 'inprocessing':
             viewHtml = renderInprocessing(appState.events, appState.personnel, appState.stations, appState.checkins);
+            postRender = () => {
+                focusCapInput();
+                attachCapEnterHandler();
+            };
             break;
         case 'outprocessing':
             viewHtml = renderOutprocessing();
@@ -386,7 +419,9 @@ function renderCurrentView() {
             viewHtml = isPrivileged() ? renderLog() : renderNotAuthorized();
             break;
         case 'admin':
-            if (isAdmin()) {
+            if (!appState.selectedEvent) {
+                viewHtml = renderSelectEventPrompt();
+            } else if (isAdmin()) {
                 viewHtml = renderAdminPanel();
                 postRender = () => loadAllStations();
             } else {
@@ -394,8 +429,151 @@ function renderCurrentView() {
             }
             break;
     }
-    contentArea.innerHTML = renderSandboxBanner() + viewHtml;
+    const status = typeof renderStatusIndicator === 'function' ? renderStatusIndicator() : '';
+    contentArea.innerHTML = status + renderSandboxBanner() + viewHtml;
     if (postRender) postRender();
+}
+
+function renderSelectEventPrompt() {
+    return `
+        <div class="empty-state">
+            <div class="empty-state-text">Select an event to use admin tools.</div>
+        </div>
+    `;
+}
+
+function setAdminTab(tab) {
+    appState.adminTab = tab;
+    renderCurrentView();
+}
+
+function openManualEntry() {
+    appState.manualEntryOpen = true;
+    renderCurrentView();
+}
+
+async function saveManualEntry(e) {
+    if (e) e.preventDefault();
+    if (!appState.selectedEvent) {
+        alert('Select an event first.');
+        return;
+    }
+    const capId = normalizeCapId(document.getElementById('manualCapId').value);
+    if (!capId) return alert('CAP ID is required.');
+    const payload = {
+        cap_id: capId,
+        full_name: document.getElementById('manualFullName').value.trim(),
+        rank: document.getElementById('manualRank').value.trim(),
+        member_type: document.getElementById('manualMemberType').value,
+        shirt_size: document.getElementById('manualShirtSize').value.trim(),
+        cell_phone: document.getElementById('manualCellPhone').value.trim(),
+        emergency_contact_name: document.getElementById('manualEmergName').value.trim(),
+        emergency_contact_phone: document.getElementById('manualEmergPhone').value.trim(),
+        email: document.getElementById('manualEmail').value.trim()
+    };
+    showLoading();
+    try {
+        await addEventRosterEntry(appState.selectedEvent.id, payload);
+        appState.manualEntryOpen = false;
+        appState.inprocessMissingCapId = '';
+        await lookupAfterCreate(capId);
+    } catch (error) {
+        console.error('Manual entry failed:', error);
+        alert('Failed to add person.');
+    } finally {
+        hideLoading();
+    }
+}
+
+async function lookupAfterCreate(capId) {
+    const { roster, accommodations, allergies } = await getEventProfile(appState.selectedEvent.id, capId);
+    if (!roster) {
+        appState.inprocessProfile = null;
+        appState.inprocessMessage = 'Could not load new record.';
+    } else {
+        appState.inprocessProfile = {
+            capId: roster.cap_id,
+            name: roster.full_name || roster.name || '',
+            rank: roster.rank,
+            memberType: roster.member_type,
+            memberStatus: roster.member_status,
+            membershipExpiration: roster.expiration,
+            shirtSize: roster.shirt_size,
+            cellPhone: roster.cell_phone,
+            homePhone: roster.home_phone,
+            emergencyContact: roster.emergency_contact_name,
+            emergencyPhone: roster.emergency_contact_phone,
+            email: roster.email,
+            accommodations,
+            allergies
+        };
+        appState.inprocessMessage = '';
+    }
+    renderCurrentView();
+}
+
+function cancelManualEntry() {
+    appState.manualEntryOpen = false;
+    renderCurrentView();
+}
+
+async function proceedApprovalBypass() {
+    const warn = appState.approvalWarning;
+    if (!warn) return;
+    const profile = warn.profile;
+    appState.inprocessProfile = profile;
+    appState.approvalWarning = null;
+    appState.inprocessMessage = '';
+    try {
+        const user = getCurrentUser ? getCurrentUser() : null;
+        await addLogEntry({
+            type: 'audit',
+            action: 'inprocessing-bypass',
+            entity_type: 'registration',
+            entity_id: profile.capId,
+            message: `Bypass approvals for CAP ${profile.capId} (Unit: ${warn.unitApproved || 'N/A'}, Parent: ${warn.parentApproved || 'N/A'})`,
+            actor_cap_id: user?.cap_id || '',
+            created_at: new Date().toISOString()
+        });
+    } catch (err) {
+        console.error('Bypass log failed:', err);
+    }
+    renderCurrentView();
+}
+
+function cancelApprovalBypass() {
+    appState.approvalWarning = null;
+    appState.inprocessProfile = null;
+    appState.inprocessMessage = 'Approval required. Lookup another CAP ID.';
+    renderCurrentView();
+    resetScannerReady();
+}
+
+function focusCapInput() {
+    const input = document.getElementById('inprocessCapId');
+    if (input) input.focus();
+    const field = document.querySelector('.cap-id-input');
+    if (field) field.classList.add('scanner-ready');
+}
+
+function attachCapEnterHandler() {
+    const input = document.getElementById('inprocessCapId');
+    if (!input) return;
+    input.removeEventListener('keydown', input.__capEnterHandler || (() => {}));
+    const handler = (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            lookupInprocessingCadet();
+        }
+    };
+    input.__capEnterHandler = handler;
+    input.addEventListener('keydown', handler);
+}
+
+function resetScannerReady() {
+    const input = document.getElementById('inprocessCapId');
+    if (input) input.value = '';
+    focusCapInput();
 }
 
 async function loadInprocessingStations(eventId) {
@@ -408,10 +586,10 @@ async function loadInprocessingStations(eventId) {
     showLoading();
     try {
         appState.selectedInprocessingEvent = eventId;
-        const stations = await getStations(eventId);
+        const stations = appState.isOnline ? await getStations(eventId) : (offlineStore ? await offlineStore.getCachedStations(eventId) : []);
         appState.stations = stations || [];
 
-        const checkinsArr = await Promise.all((stations || []).map(s => getCheckins(s.id)));
+        const checkinsArr = appState.isOnline ? await Promise.all((stations || []).map(s => getCheckins(s.id))) : [];
         appState.checkins = (checkinsArr || []).flat();
 
         const container = document.getElementById('inprocessingStationsContainer');
@@ -425,9 +603,14 @@ async function loadInprocessingStations(eventId) {
 }
 
 async function loadAllStations() {
+    if (!appState.selectedEvent) {
+        const adminList = document.getElementById('adminStationsList');
+        if (adminList) adminList.innerHTML = '<div class="empty-state-text text-center">Select an event.</div>';
+        return;
+    }
     showLoading();
     try {
-        const stations = await getAllStations();
+        const stations = await getStations(appState.selectedEvent.id);
         appState.stations = stations || [];
         const checkinsArr = await Promise.all((appState.stations || []).map(s => getCheckins(s.id)));
         appState.checkins = (checkinsArr || []).flat();
@@ -453,6 +636,357 @@ async function loadAllStations() {
     } finally {
         hideLoading();
     }
+}
+
+// ==================== REGISTRATION IMPORT ====================
+
+async function handleRegistrationUpload() {
+    const statusEl = document.getElementById('registrationUploadStatus');
+    const messageEl = document.getElementById('registrationUploadMessage');
+    const fileInput = document.getElementById('registrationUploadFile');
+    const eventId = appState.selectedEvent ? appState.selectedEvent.id : '';
+
+    if (!fileInput || !fileInput.files || !fileInput.files.length) {
+        alert('Select a .xlsx file to upload.');
+        return;
+    }
+
+    if (!eventId) {
+        alert('Select an event first.');
+        return;
+    }
+
+    const file = fileInput.files[0];
+    statusEl.textContent = 'Reading file...';
+    messageEl.textContent = '';
+
+    try {
+        showLoading();
+        const arrayBuffer = await file.arrayBuffer();
+        const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+        const sheet = workbook.Sheets[workbook.SheetNames[0]];
+        const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+
+        if (!rows || rows.length < 2) {
+            throw new Error('No data rows found in the worksheet.');
+        }
+
+        const col = (letter) => XLSX.utils.decode_col(letter);
+        const mapRow = (row) => {
+            const val = (letter) => normalizeCell(row[col(letter)]);
+            const capId = val('B');
+            if (!capId) return null;
+            return {
+                cap_id: capId,
+                rank: val('F'),
+                region: val('J'),
+                wing: val('K'),
+                unit: val('L'),
+                gender: val('M'),
+                dob: val('N'),
+                age: Number(val('O')) || null,
+                shirt_size: val('T'),
+                member_type: val('U'),
+                expiration: val('V'),
+                member_status: val('W'),
+                home_phone: val('X'),
+                cell_phone: val('Y'),
+                emergency_contact_name: val('Z'),
+                emergency_contact_phone: val('AA'),
+                email: val('AB'),
+                unit_approved: val('AR'),
+                parent_approved: val('CM'),
+            };
+        };
+
+        const dataRows = rows.slice(1) // skip header
+            .map(mapRow)
+            .filter(Boolean);
+
+        if (!dataRows.length) {
+            throw new Error('No valid CAP IDs found in column B.');
+        }
+
+        statusEl.textContent = 'Uploading...';
+
+        const count = await uploadRegistrations(eventId, dataRows);
+
+        statusEl.textContent = '';
+        messageEl.textContent = `✓ Uploaded ${count} registrations.`;
+
+        // Refresh roster cache for the selected event if it matches
+        if (appState.selectedEvent && appState.selectedEvent.id === eventId) {
+            appState.roster = await getRoster(eventId);
+            renderCurrentView();
+        }
+    } catch (error) {
+        console.error('Registration upload failed:', error);
+        statusEl.textContent = '';
+        messageEl.textContent = `Error: ${error.message || error}`;
+        alert('Upload failed: ' + (error.message || error));
+    } finally {
+        hideLoading();
+    }
+}
+
+function normalizeCell(value) {
+    if (value == null) return '';
+    if (value instanceof Date) return value.toISOString().slice(0, 10);
+    if (typeof value === 'number' && value > 20000 && value < 50000 && XLSX?.SSF?.parse_date_code) {
+        const d = XLSX.SSF.parse_date_code(value);
+        if (d) {
+            const pad = (n) => String(n).padStart(2, '0');
+            return `${d.y}-${pad(d.m)}-${pad(d.d)}`;
+        }
+    }
+    return String(value).trim();
+}
+
+function isYes(val) {
+    const s = String(val || '').trim().toLowerCase();
+    if (!s) return false;
+    return ['yes', 'y', 'true', 't', '1', 'approved'].includes(s);
+}
+
+function setupConnectionMonitoring() {
+    window.addEventListener('online', () => {
+        appState.isOnline = true;
+        renderCurrentView();
+        syncPendingNow();
+    });
+    window.addEventListener('offline', () => {
+        appState.isOnline = false;
+        renderCurrentView();
+    });
+    refreshPendingCount();
+    setInterval(async () => {
+        const online = await confirmOnline();
+        if (online !== appState.isOnline) {
+            appState.isOnline = online;
+            if (online) syncPendingNow();
+            renderCurrentView();
+        }
+        refreshPendingCount();
+    }, 15000);
+}
+
+async function confirmOnline() {
+    if (!supabaseClient) return navigator.onLine;
+    try {
+        const { error } = await supabaseClient.from('events').select('id').limit(1);
+        if (error) throw error;
+        return true;
+    } catch {
+        return navigator.onLine && false;
+    }
+}
+
+async function refreshPendingCount() {
+    if (!window.offlineStore) return;
+    const pending = await offlineStore.getPendingCheckins();
+    appState.pendingCount = pending.length;
+}
+
+async function syncPendingNow() {
+    if (!window.offlineStore || appState.syncingPending) return;
+    const pending = await offlineStore.getPendingCheckins();
+    appState.pendingCount = pending.length;
+    if (!pending.length || !appState.isOnline) {
+        renderCurrentView();
+        return;
+    }
+    appState.syncingPending = true;
+    renderCurrentView();
+    try {
+        for (const item of pending) {
+            await checkInPersonnel(item.stationId, item.personnelId, item.checkedInBy || '');
+            await offlineStore.removePendingCheckin(item.id);
+        }
+    } catch (err) {
+        console.error('Sync failed:', err);
+    } finally {
+        const remaining = await offlineStore.getPendingCheckins();
+        appState.pendingCount = remaining.length;
+        appState.syncingPending = false;
+        renderCurrentView();
+    }
+}
+
+async function handleAccommodationsUpload() {
+    const statusEl = document.getElementById('accommodationsUploadStatus');
+    const messageEl = document.getElementById('accommodationsUploadMessage');
+    const fileInput = document.getElementById('accommodationsUploadFile');
+    const eventId = appState.selectedEvent ? appState.selectedEvent.id : '';
+    if (!eventId) return alert('Select an event first.');
+    if (!fileInput || !fileInput.files || !fileInput.files.length) return alert('Select a .xlsx file to upload.');
+
+    statusEl.textContent = 'Reading file...';
+    messageEl.textContent = '';
+    try {
+        showLoading();
+        const file = fileInput.files[0];
+        const arrayBuffer = await file.arrayBuffer();
+        const sheet = XLSX.read(arrayBuffer, { type: 'array' }).Sheets[XLSX.read(arrayBuffer, { type: 'array' }).SheetNames[0]];
+        const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+        const col = (letter) => XLSX.utils.decode_col(letter);
+        const mapRow = (row) => {
+            const val = (letter) => normalizeCell(row[col(letter)]);
+            const capId = val('C');
+            if (!capId) return null;
+            return {
+                cap_id: capId,
+                full_name: val('D'),
+                member_type: val('E'),
+                accommodation_type: val('F'),
+                temporary: val('G'),
+                start_date: val('H'),
+                end_date: val('I'),
+                description: val('J')
+            };
+        };
+        const dataRows = rows.slice(1).map(mapRow).filter(Boolean);
+        if (!dataRows.length) throw new Error('No valid rows found.');
+        statusEl.textContent = 'Uploading...';
+        const count = await uploadAccommodations(eventId, dataRows);
+        statusEl.textContent = '';
+        messageEl.textContent = `✓ Uploaded ${count} accommodations.`;
+    } catch (error) {
+        console.error('Accommodations upload failed:', error);
+        statusEl.textContent = '';
+        messageEl.textContent = `Error: ${error.message || error}`;
+        alert('Upload failed: ' + (error.message || error));
+    } finally {
+        hideLoading();
+    }
+}
+
+async function handleAllergiesUpload() {
+    const statusEl = document.getElementById('allergiesUploadStatus');
+    const messageEl = document.getElementById('allergiesUploadMessage');
+    const fileInput = document.getElementById('allergiesUploadFile');
+    const eventId = appState.selectedEvent ? appState.selectedEvent.id : '';
+    if (!eventId) return alert('Select an event first.');
+    if (!fileInput || !fileInput.files || !fileInput.files.length) return alert('Select a .xlsx file to upload.');
+
+    statusEl.textContent = 'Reading file...';
+    messageEl.textContent = '';
+    try {
+        showLoading();
+        const file = fileInput.files[0];
+        const arrayBuffer = await file.arrayBuffer();
+        const sheet = XLSX.read(arrayBuffer, { type: 'array' }).Sheets[XLSX.read(arrayBuffer, { type: 'array' }).SheetNames[0]];
+        const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+        const col = (letter) => XLSX.utils.decode_col(letter);
+        const mapRow = (row) => {
+            const val = (letter) => normalizeCell(row[col(letter)]);
+            const capId = val('C');
+            if (!capId) return null;
+            return {
+                cap_id: capId,
+                is_anaphyaxis: val('D'),
+                has_epipen: val('E'),
+                has_albuterol_inhaler: val('F'),
+                full_name: val('G'),
+                allergy_name: val('H'),
+                allergy_type: val('I'),
+                typical_reactions: val('J'),
+                treatments: val('K'),
+                contact_name: val('L'),
+                emergency_contact: val('M'),
+                commander_name: val('N'),
+                commander_contact: val('O'),
+                other_medications: val('P'),
+                other_reactions: val('Q'),
+            };
+        };
+        const dataRows = rows.slice(1).map(mapRow).filter(Boolean);
+        if (!dataRows.length) throw new Error('No valid rows found.');
+        statusEl.textContent = 'Uploading...';
+        const count = await uploadAllergies(eventId, dataRows);
+        statusEl.textContent = '';
+        messageEl.textContent = `✓ Uploaded ${count} allergy records.`;
+    } catch (error) {
+        console.error('Allergies upload failed:', error);
+        statusEl.textContent = '';
+        messageEl.textContent = `Error: ${error.message || error}`;
+        alert('Upload failed: ' + (error.message || error));
+    } finally {
+        hideLoading();
+    }
+}
+
+async function handleProfileUploadGeneric(opts) {
+    const { fileInputId, statusId, messageId, field, valueHeaders } = opts;
+    const statusEl = document.getElementById(statusId);
+    const messageEl = document.getElementById(messageId);
+    const fileInput = document.getElementById(fileInputId);
+    const eventId = appState.selectedEvent ? appState.selectedEvent.id : '';
+
+    if (!eventId) {
+        alert('Select an event first.');
+        return;
+    }
+    if (!fileInput || !fileInput.files || !fileInput.files.length) {
+        alert('Select a .xlsx file to upload.');
+        return;
+    }
+
+    statusEl.textContent = 'Reading file...';
+    messageEl.textContent = '';
+
+    try {
+        showLoading();
+        const file = fileInput.files[0];
+        const arrayBuffer = await file.arrayBuffer();
+        const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+        const sheet = workbook.Sheets[workbook.SheetNames[0]];
+        const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+        if (!rows || rows.length < 2) {
+            throw new Error('No data rows found.');
+        }
+
+        const headers = rows[0].map(h => String(h || '').trim().toLowerCase());
+        const capIdx = findHeaderIndex(headers, ['capid', 'cap id', 'cap_id', 'id', 'memberid', 'member id'], 1);
+        const valIdx = findHeaderIndex(headers, valueHeaders, 2);
+
+        const updates = rows.slice(1).map(r => {
+            const cap = normalizeCapId(r[capIdx]);
+            const val = normalizeCell(r[valIdx]);
+            if (!cap || !val) return null;
+            const existing = (appState.roster || []).find(entry => normalizeCapId(entry.cap_id) === cap);
+            const mergedProfile = { ...(existing?.profile || {}), [field]: val };
+            return { cap_id: cap, profile: mergedProfile };
+        }).filter(Boolean);
+
+        if (!updates.length) {
+            throw new Error('No valid rows found.');
+        }
+
+        statusEl.textContent = 'Uploading...';
+        await applyRosterProfileUpdates(eventId, updates);
+
+        statusEl.textContent = '';
+        messageEl.textContent = `Updated ${updates.length} records.`;
+
+        if (appState.selectedEvent && appState.selectedEvent.id === eventId) {
+            appState.roster = await getRoster(eventId);
+            renderCurrentView();
+        }
+    } catch (error) {
+        console.error('Profile upload failed:', error);
+        statusEl.textContent = '';
+        messageEl.textContent = `Error: ${error.message || error}`;
+        alert('Upload failed: ' + (error.message || error));
+    } finally {
+        hideLoading();
+    }
+}
+
+function findHeaderIndex(headers, candidates, fallbackIndex = 0) {
+    for (let i = 0; i < headers.length; i++) {
+        if (candidates.includes(headers[i])) return i;
+    }
+    return fallbackIndex;
 }
 
 function openEditStationModal(stationId) {
@@ -518,8 +1052,17 @@ async function deleteStationAction(stationId) {
 async function checkInPersonnelAtStation(stationId, personnelId) {
     showLoading();
     try {
-        await checkInPersonnel(stationId, personnelId, currentUser ? currentUser.cap_id : '');
-        await loadInprocessingStations(appState.selectedInprocessingEvent);
+        if (!appState.isOnline && window.offlineStore) {
+            await offlineStore.addPendingCheckin(stationId, personnelId, currentUser ? currentUser.cap_id : '', appState.selectedEvent?.id);
+            appState.pendingCount = (await offlineStore.getPendingCheckins()).length;
+            appState.checkins = appState.checkins || [];
+            appState.checkins.push({ station_id: stationId, personnel_id: personnelId, checked_in_at: new Date().toISOString() });
+            alert('✓ Checked in (pending sync)');
+        } else {
+            await checkInPersonnel(stationId, personnelId, currentUser ? currentUser.cap_id : '');
+            await loadInprocessingStations(appState.selectedInprocessingEvent);
+        }
+        resetScannerReady();
     } catch (error) {
         console.error('Check-in failed:', error);
         alert('Check-in failed');
@@ -1182,33 +1725,81 @@ function lookupInprocessingCadet() {
     if (!capId) {
         appState.inprocessProfile = null;
         appState.inprocessMessage = 'Enter a CAP ID to search.';
+        appState.inprocessMissingCapId = '';
+        appState.manualEntryOpen = false;
+        appState.approvalWarning = null;
         renderCurrentView();
         return;
     }
-    fetchInprocessingData()
-        .then(rows => {
-            const match = rows.find(r => normalizeCapId(r.capId) === capId);
-            if (!match) {
+    if (!appState.selectedEvent) {
+        appState.inprocessProfile = null;
+        appState.inprocessMessage = 'Select an event first.';
+        appState.inprocessMissingCapId = '';
+        appState.manualEntryOpen = false;
+        appState.approvalWarning = null;
+        renderCurrentView();
+        return;
+    }
+    showLoading();
+    const profileSource = appState.isOnline ? getEventProfile(appState.selectedEvent.id, capId) : (offlineStore ? offlineStore.getCachedProfile(appState.selectedEvent.id, capId) : Promise.resolve({ roster: null, accommodations: [], allergies: [] }));
+    profileSource
+        .then(({ roster, accommodations, allergies }) => {
+            if (!roster) {
                 appState.inprocessProfile = null;
-                appState.inprocessMessage = `No record found for CAP ID ${capId}.`;
-                renderCurrentView();
+                appState.inprocessMessage = 'CAP ID not found in registration. Add manually?';
+                appState.inprocessMissingCapId = capId;
+                appState.manualEntryOpen = false;
+                appState.approvalWarning = null;
                 return;
             }
-            appState.inprocessProfile = match;
-            appState.inprocessMessage = '';
-            appState.inprocessStation = null;
-            if (appState.selectedEvent) {
-                return getRoster(appState.selectedEvent.id).then(roster => {
-                    appState.roster = roster;
-                    renderCurrentView();
-                });
+            const memberType = roster.member_type || '';
+            const profile = {
+                capId: roster.cap_id,
+                name: roster.full_name || roster.name || '',
+                rank: roster.rank,
+                memberType: roster.member_type,
+                memberStatus: roster.member_status,
+                membershipExpiration: roster.expiration,
+                shirtSize: roster.shirt_size,
+                cellPhone: roster.cell_phone,
+                homePhone: roster.home_phone,
+                emergencyContact: roster.emergency_contact_name,
+                emergencyPhone: roster.emergency_contact_phone,
+                email: roster.email,
+                accommodations,
+                allergies
+            };
+            const unitYes = isYes(roster.unit_approved);
+            const parentYes = isYes(roster.parent_approved);
+            const isCadet = memberType && memberType.toLowerCase() === 'cadet';
+            if (isCadet && (!unitYes || !parentYes)) {
+                appState.approvalWarning = {
+                    capId,
+                    profile,
+                    unitApproved: roster.unit_approved || '',
+                    parentApproved: roster.parent_approved || ''
+                };
+                appState.inprocessProfile = null;
+                appState.inprocessMessage = '';
+            } else {
+                appState.approvalWarning = null;
+                appState.inprocessProfile = profile;
+                appState.inprocessMessage = '';
             }
-            renderCurrentView();
+            appState.inprocessMissingCapId = '';
+            appState.manualEntryOpen = false;
+            appState.inprocessStation = null;
         })
         .catch(err => {
             console.error('Inprocessing lookup failed:', err);
             appState.inprocessProfile = null;
-            appState.inprocessMessage = 'Unable to load registration data. Check the sheet link and sharing settings.';
+            appState.inprocessMessage = 'Unable to load registration data.';
+            appState.inprocessMissingCapId = '';
+            appState.manualEntryOpen = false;
+            appState.approvalWarning = null;
+        })
+        .finally(() => {
+            hideLoading();
             renderCurrentView();
         });
 }
@@ -1629,6 +2220,66 @@ function renderInprocessingProfile(profile) {
                     <div class="profile-value">Not connected yet.</div>
                 </div>
             </div>
+        </div>
+    `;
+}
+
+// Override with event-profile aware renderer
+function renderInprocessingProfile(profile) {
+    const fullName = profile.name || `${profile.firstName || ''} ${profile.lastName || ''}`.trim();
+    const accommodations = profile.accommodations || [];
+    const allergies = profile.allergies || [];
+    const fmtYes = (v) => {
+        const s = String(v || '').toLowerCase();
+        if (!s) return 'No';
+        return ['y', 'yes', 'true', 't', '1', 'x'].some(k => s.includes(k)) ? 'Yes' : s;
+    };
+    return `
+        <div class="profile-section">
+            <div class="resource-header status-blue">PROFILE</div>
+            <div class="profile-grid">
+                <div class="profile-field"><div class="profile-label">Name</div><div class="profile-value">${fullName || 'N/A'}</div></div>
+                <div class="profile-field"><div class="profile-label">CAP ID</div><div class="profile-value">${profile.capId || 'N/A'}</div></div>
+                <div class="profile-field"><div class="profile-label">Rank</div><div class="profile-value">${profile.rank || 'N/A'}</div></div>
+                <div class="profile-field"><div class="profile-label">Member Type</div><div class="profile-value">${profile.memberType || 'N/A'}</div></div>
+                <div class="profile-field"><div class="profile-label">Status</div><div class="profile-value">${profile.memberStatus || 'N/A'}</div></div>
+                <div class="profile-field"><div class="profile-label">Membership Expires</div><div class="profile-value">${profile.membershipExpiration || 'N/A'}</div></div>
+                <div class="profile-field"><div class="profile-label">Shirt Size</div><div class="profile-value">${profile.shirtSize || 'N/A'}</div></div>
+                <div class="profile-field"><div class="profile-label">Cell Phone</div><div class="profile-value">${profile.cellPhone || 'N/A'}</div></div>
+                <div class="profile-field"><div class="profile-label">Home Phone</div><div class="profile-value">${profile.homePhone || 'N/A'}</div></div>
+                <div class="profile-field"><div class="profile-label">Emergency Contact</div><div class="profile-value">${profile.emergencyContact || 'N/A'}</div></div>
+                <div class="profile-field"><div class="profile-label">Emergency Phone</div><div class="profile-value">${profile.emergencyPhone || 'N/A'}</div></div>
+                <div class="profile-field"><div class="profile-label">Email</div><div class="profile-value">${profile.email || 'N/A'}</div></div>
+            </div>
+        </div>
+        <div class="profile-section">
+            <div class="resource-header status-blue">ACCOMMODATIONS</div>
+            ${accommodations.length ? `<div class="profile-grid">
+                ${accommodations.map(a => `
+                    <div class="profile-field"><div class="profile-label">Type</div><div class="profile-value">${a.accommodation_type || 'N/A'}</div></div>
+                    <div class="profile-field"><div class="profile-label">Temporary</div><div class="profile-value">${a.temporary || 'N/A'}</div></div>
+                    <div class="profile-field"><div class="profile-label">Start Date</div><div class="profile-value">${a.start_date || 'N/A'}</div></div>
+                    <div class="profile-field"><div class="profile-label">End Date</div><div class="profile-value">${a.end_date || 'N/A'}</div></div>
+                    <div class="profile-field"><div class="profile-label">Details</div><div class="profile-value">${a.description || 'N/A'}</div></div>
+                `).join('')}
+            </div>` : '<div class="resource-details">No accommodations on file.</div>'}
+        </div>
+        <div class="profile-section">
+            <div class="resource-header status-blue">ALLERGIES</div>
+            ${allergies.length ? `<div class="profile-grid">
+                ${allergies.map(a => `
+                    <div class="profile-field"><div class="profile-label">Allergy</div><div class="profile-value">${a.allergy_name || 'N/A'}</div></div>
+                    <div class="profile-field"><div class="profile-label">Type</div><div class="profile-value">${a.allergy_type || 'N/A'}</div></div>
+                    <div class="profile-field"><div class="profile-label">Anaphylaxis Risk</div><div class="profile-value">${fmtYes(a.is_anaphyaxis)}</div></div>
+                    <div class="profile-field"><div class="profile-label">Has EpiPen</div><div class="profile-value">${fmtYes(a.has_epipen)}</div></div>
+                    <div class="profile-field"><div class="profile-label">Has Inhaler</div><div class="profile-value">${fmtYes(a.has_albuterol_inhaler)}</div></div>
+                    <div class="profile-field"><div class="profile-label">Typical Reactions</div><div class="profile-value">${a.typical_reactions || 'N/A'}</div></div>
+                    <div class="profile-field"><div class="profile-label">Treatments</div><div class="profile-value">${a.treatments || 'N/A'}</div></div>
+                    <div class="profile-field"><div class="profile-label">Emergency Contact</div><div class="profile-value">${a.emergency_contact || 'N/A'}</div></div>
+                    <div class="profile-field"><div class="profile-label">Emergency Phone</div><div class="profile-value">${a.contact_name || 'N/A'}</div></div>
+                    <div class="profile-field"><div class="profile-label">Other Medications</div><div class="profile-value">${a.other_medications || 'N/A'}</div></div>
+                `).join('')}
+            </div>` : '<div class="resource-details">No allergies on file.</div>'}
         </div>
     `;
 }
