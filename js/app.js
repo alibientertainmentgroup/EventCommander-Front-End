@@ -1942,7 +1942,8 @@ async function signInInprocessing(role) {
         renderCurrentView();
     } catch (error) {
         console.error('Sign in failed:', error);
-        alert('Failed to sign in.');
+        const msg = error?.message || String(error);
+        alert('Failed to sign in: ' + msg);
     } finally {
         hideLoading();
     }
