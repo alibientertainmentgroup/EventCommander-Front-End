@@ -1805,9 +1805,13 @@ function lookupInprocessingCadet() {
                 allergies
             };
             const unitYes = isYes(roster.unit_approved);
-            const parentYes = isYes(roster.parent_approved);
+            const parentRaw = roster.parent_approved || '';
+            const parentYes = isYes(parentRaw);
+            const parentNA = String(parentRaw || '').trim().toLowerCase() === 'n/a';
+            const ageNum = Number(roster.age);
+            const parentOk = parentYes || parentNA || (Number.isFinite(ageNum) && ageNum >= 18);
             const isCadet = memberType && memberType.toLowerCase() === 'cadet';
-            if (isCadet && (!unitYes || !parentYes)) {
+            if (isCadet && (!unitYes || !parentOk)) {
                 appState.approvalWarning = {
                     capId,
                     profile,
