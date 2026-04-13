@@ -465,6 +465,7 @@ function renderRoster(roster) {
                         <th>Name</th>
                         <th>Rank</th>
                         <th>CAP ID</th>
+                        <th>Status</th>
                         <th>Sign In</th>
                         <th>Sign Out</th>
                     </tr>
@@ -473,12 +474,13 @@ function renderRoster(roster) {
                     ${sorted.length ? sorted.map(r => `
                         <tr class="roster-line" onclick="openRosterProfile('${r.id}')">
                             <td>${r.lastName ? `${r.lastName}${r.firstName ? ` ${r.firstName}` : ''}` : (r.name || 'Unknown')}</td>
-                            <td>${r.rank || 'â€”'}</td>
+                            <td>${r.rank || '—'}</td>
                             <td>${r.capId || r.cap_id || 'N/A'}</td>
+                            <td>${r.signed_out_at ? 'Signed Out' : 'Signed In'}</td>
                             <td>${formatSignedIn(r.signed_in_at)}</td>
                             <td>${r.signed_out_at ? formatSignedIn(r.signed_out_at) : ''}</td>
                         </tr>
-                    `).join('') : '<tr><td class="empty-state-text text-center" colspan="5">No roster entries yet</td></tr>'}
+                    `).join('') : '<tr><td class="empty-state-text text-center" colspan="6">No roster entries yet</td></tr>'}
                 </tbody>
             </table>
         </div>
