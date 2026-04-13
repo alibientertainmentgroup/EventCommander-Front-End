@@ -1896,50 +1896,45 @@ async function signInInprocessing(role) {
         alert('Invalid CAP ID.');
         return;
     }
-    const activeEntry = appState.roster.find(r => normalizeCapId(r.cap_id) === capId && !r.signed_out_at);
-    console.log('signIn check', { capId, activeEntryExists: !!activeEntry });
-    if (activeEntry) {
-        alert('This CAP ID is already signed in.');
-        return;
-    }
-    const previousEntry = appState.roster.find(r => normalizeCapId(r.cap_id) === capId && r.signed_out_at);
-    console.log('previousEntry', previousEntry);
+    const allEntries = appState.roster.filter(r => normalizeCapId(r.cap_id) === capId);
+    const latestEntry = allEntries.sort((a, b) => (b.signed_in_at || '').localeCompare(a.signed_in_at || '')).shift();
+    console.log('signIn check', { capId, latestEntry });
         const firstName = profile.firstName || profile.name_first || '';
         const lastName = profile.lastName || profile.name_last || '';
         const fullName = profile.name || `${firstName} ${lastName}`.trim();
         const now = new Date();
         showLoading();
         try {
-            if (previousEntry) {
-                previousEntry.event_id = appState.selectedEvent.id;
-                previousEntry.rank = profile.rank || '';
-                previousEntry.name = fullName || '';
-                previousEntry.firstName = firstName;
-                previousEntry.lastName = lastName;
-                previousEntry.role = role;
-                previousEntry.signed_in_at = now.toISOString();
-                previousEntry.signed_out_at = null;
-                previousEntry.stations = buildDefaultStations();
-                previousEntry.flags = [];
-                previousEntry.profile = { ...profile };
-                await updateRosterEntry(previousEntry);
-            } else {
-                const entry = {
-                    event_id: appState.selectedEvent.id,
-                    cap_id: capId,
-                    rank: profile.rank || '',
-                    name: fullName || '',
-                    firstName,
-                    lastName,
-                    role,
-                    signed_in_at: now.toISOString(),
-                    signed_out_at: null,
-                    stations: buildDefaultStations(),
-                    flags: [],
-                    profile: { ...profile }
-                };
-                await addRosterEntry(entry);
-            }
+        if (latestEntry) {
+            latestEntry.event_id = appState.selectedEvent.id;
+            latestEntry.rank = profile.rank || '';
+            latestEntry.name = fullName || '';
+            latestEntry.firstName = firstName;
+            latestEntry.lastName = lastName;
+            latestEntry.role = role;
+            latestEntry.signed_in_at = now.toISOString();
+            latestEntry.signed_out_at = null;
+            latestEntry.stations = buildDefaultStations();
+            latestEntry.flags = latestEntry.flags || [];
+            latestEntry.profile = { ...profile };
+            await updateRosterEntry(latestEntry);
+        } else {
+            const entry = {
+                event_id: appState.selectedEvent.id,
+                cap_id: capId,
+                rank: profile.rank || '',
+                name: fullName || '',
+                firstName,
+                lastName,
+                role,
+                signed_in_at: now.toISOString(),
+                signed_out_at: null,
+                stations: buildDefaultStations(),
+                flags: [],
+                profile: { ...profile }
+            };
+            await addRosterEntry(entry);
+        }
         appState.roster = await getRoster(appState.selectedEvent.id);
         appState.inprocessProfile = null;
         appState.inprocessStation = null;
