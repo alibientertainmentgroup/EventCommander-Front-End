@@ -1953,7 +1953,7 @@ async function signInInprocessing(role) {
             appState.inprocessStation = stationKeys[0];
         }
         await loadInprocessingStations(appState.selectedEvent.id);
-        appState.inprocessMessage = `${role === 'staff' ? 'Staff' : 'Student'} signed in.`;
+        appState.inprocessMessage = '';
         renderCurrentView();
     } catch (error) {
         console.error('Sign in failed:', error);

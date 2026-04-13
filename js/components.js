@@ -273,7 +273,7 @@ function renderInprocessing(events, personnel, stations, checkins) {
 }
 
 function renderInprocessingStations(stations, personnel, checkins) {
-    if (stations.length === 0 || (personnel || []).length === 0) {
+    if (stations.length === 0) {
         return '';
     }
 
