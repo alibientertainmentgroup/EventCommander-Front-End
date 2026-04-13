@@ -251,7 +251,7 @@ function renderInprocessing(events, personnel, stations, checkins) {
             </div>
             <div class="tag-input-row">
                 <input type="text" class="form-input cap-id-input" id="inprocessCapId" placeholder="Enter CAP ID" maxlength="6" inputmode="numeric">
-                <button class="btn btn-blue" onclick="lookupInprocessingCadet()">GO</button>
+                <button class="btn btn-blue" onclick="lookupInprocessingCadet()">Lookup</button>
                 <button class="btn btn-outline btn-small" onclick="resetScannerReady()">Next Person</button>
             </div>
             ${appState.inprocessMessage ? `<div class="resource-details" style="margin-top:8px;">${appState.inprocessMessage}</div>` : ''}

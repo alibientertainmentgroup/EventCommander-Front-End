@@ -710,8 +710,13 @@ async function handleRegistrationUpload() {
             const val = (letter) => normalizeCell(row[col(letter)]);
             const capId = val('B');
             if (!capId) return null;
+            const lastName = val('G');
+            const firstName = val('H');
             return {
                 cap_id: capId,
+                name_first: firstName,
+                name_last: lastName,
+                full_name: [firstName, lastName].filter(Boolean).join(' ').trim(),
                 rank: val('F'),
                 region: val('J'),
                 wing: val('K'),
@@ -1779,7 +1784,7 @@ function lookupInprocessingCadet() {
             const memberType = roster.member_type || '';
             const profile = {
                 capId: roster.cap_id,
-                name: roster.full_name || roster.name || '',
+                name: roster.full_name || [roster.name_first, roster.name_last].filter(Boolean).join(' ').trim() || '',
                 rank: roster.rank,
                 memberType: roster.member_type,
                 memberStatus: roster.member_status,
