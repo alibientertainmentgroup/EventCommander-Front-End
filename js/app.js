@@ -1788,6 +1788,7 @@ function lookupInprocessingCadet() {
             const profile = {
                 capId: roster.cap_id,
                 name: fullName,
+                full_name: fullName,
                 firstName,
                 lastName,
                 rank: roster.rank,
@@ -2260,7 +2261,7 @@ function renderInprocessingProfile(profile) {
 
 // Override with event-profile aware renderer
 function renderInprocessingProfile(profile) {
-    const fullName = profile.name || `${profile.firstName || ''} ${profile.lastName || ''}`.trim();
+    const fullName = profile.name || profile.full_name || `${profile.firstName || ''} ${profile.lastName || ''}`.trim();
     const accommodations = profile.accommodations || [];
     const allergies = profile.allergies || [];
     const fmtYes = (v) => {
