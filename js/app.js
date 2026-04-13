@@ -1839,6 +1839,26 @@ function lookupInprocessingCadet() {
         });
 }
 
+function handleInprocessAction() {
+    const input = document.getElementById('inprocessCapId');
+    const capId = normalizeCapId(input ? input.value : '');
+    if (!capId) {
+        focusCapInput();
+        return;
+    }
+    const profileCap = appState.inprocessProfile ? normalizeCapId(appState.inprocessProfile.capId) : '';
+    if (appState.inprocessProfile && profileCap === capId) {
+        const role = (appState.inprocessProfile.memberType || '').toLowerCase() === 'senior' ? 'staff' : 'student';
+        signInInprocessing(role);
+        return;
+    }
+    if (!appState.inprocessProfile && appState.inprocessMissingCapId === capId) {
+        openManualEntry();
+        return;
+    }
+    lookupInprocessingCadet();
+}
+
 let inprocessingAvgTimerId = null;
 
 function startInprocessingAverageTimer() {

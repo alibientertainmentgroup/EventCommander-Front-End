@@ -240,18 +240,15 @@ function renderInprocessing(events, personnel, stations, checkins) {
         </div>
     ` : '';
 
+    const hasProfile = !!appState.inprocessProfile;
+    const checkinLabel = hasProfile ? 'Sign In' : 'Lookup / Sign In';
     const checkinCard = `
         <div class="card" style="margin-bottom:16px;">
-            <div class="flex-between" style="margin-bottom:8px;">
-                <div>
-                    <div class="resource-name">Check In</div>
-                    <div class="resource-details">${appState.selectedEvent ? appState.selectedEvent.title : ''}</div>
-                </div>
-                <div class="badge badge-blue">${(appState.checkins || []).length} checked in</div>
-            </div>
+            <div class="resource-name">Check In</div>
+            <div class="resource-details">${appState.selectedEvent ? appState.selectedEvent.title : ''}</div>
             <div class="tag-input-row">
                 <input type="text" class="form-input cap-id-input" id="inprocessCapId" placeholder="Enter CAP ID" maxlength="6" inputmode="numeric">
-                <button class="btn btn-blue" onclick="lookupInprocessingCadet()">Lookup</button>
+                <button class="btn btn-blue" onclick="handleInprocessAction()">${checkinLabel}</button>
                 <button class="btn btn-outline btn-small" onclick="resetScannerReady()">Next Person</button>
             </div>
             ${appState.inprocessMessage ? `<div class="resource-details" style="margin-top:8px;">${appState.inprocessMessage}</div>` : ''}
