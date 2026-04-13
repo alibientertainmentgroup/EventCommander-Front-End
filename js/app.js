@@ -1782,9 +1782,14 @@ function lookupInprocessingCadet() {
                 return;
             }
             const memberType = roster.member_type || '';
+            const firstName = roster.name_first || roster.firstName || '';
+            const lastName = roster.name_last || roster.lastName || '';
+            const fullName = roster.full_name || `${firstName} ${lastName}`.trim();
             const profile = {
                 capId: roster.cap_id,
-                name: roster.full_name || [roster.name_first, roster.name_last].filter(Boolean).join(' ').trim() || '',
+                name: fullName,
+                firstName,
+                lastName,
                 rank: roster.rank,
                 memberType: roster.member_type,
                 memberStatus: roster.member_status,
