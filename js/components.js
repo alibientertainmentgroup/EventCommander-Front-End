@@ -1027,10 +1027,12 @@ function renderAdminPanel() {
     ];
 
     const tabsHtml = `
-        <div class="admin-tabs" style="display:flex; gap:8px; margin:12px 0 16px 0; flex-wrap: wrap;">
+        <div class="admin-tabs" style="display:flex; gap:10px; margin:12px 0 16px 0; flex-wrap: wrap;">
             ${tabs.map(t => `
-                <button class="nav-item ${activeTab === t.id ? 'active' : ''}" style="flex:0 0 auto;" onclick="setAdminTab('${t.id}')">
-                    <span class="nav-label">${t.label}</span>
+                <button class="btn btn-outline btn-small admin-tab-btn ${activeTab === t.id ? 'active' : ''}"
+                    style="flex:0 0 auto;"
+                    onclick="setAdminTab('${t.id}')">
+                    ${t.label}
                 </button>
             `).join('')}
         </div>

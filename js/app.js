@@ -1119,19 +1119,9 @@ async function loadEventStations(eventId) {
     }
 }
 
-function openStationModal(eventId) {
-    const eventOptions = (appState.events || []).map(e => `<option value="${e.id}">${e.title}</option>`).join('');
+function openStationModal() {
     const modalContent = `
         <form id="stationForm" onsubmit="saveStation(event)">
-            ${!eventId ? `
-                <div class="form-row">
-                    <label class="form-label">Event</label>
-                    <select id="stationEventSelect" class="form-select" required>
-                        <option value="">Select event...</option>
-                        ${eventOptions}
-                    </select>
-                </div>
-            ` : ''}
             <div class="form-row">
                 <label class="form-label">Station Name</label>
                 <input type="text" class="form-input" id="stationName" required>
@@ -1157,7 +1147,7 @@ function openStationModal(eventId) {
 
 async function saveStation(e, eventId) {
     e.preventDefault();
-    const chosenEventId = eventId || (document.getElementById('stationEventSelect') ? document.getElementById('stationEventSelect').value : null);
+    const chosenEventId = appState.selectedEvent ? appState.selectedEvent.id : eventId;
     if (!chosenEventId) return alert('Please select an event for the station.');
     const stationData = {
         event_id: chosenEventId,
