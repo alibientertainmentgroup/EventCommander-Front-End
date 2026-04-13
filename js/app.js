@@ -254,6 +254,18 @@ async function loadAllData() {
         appState.logs = filterSandbox(logs);
         appState.supportTickets = filterSandbox(supportTickets);
 
+        // Restore selected event from storage if available
+        if (!appState.selectedEvent) {
+            const storedId = localStorage.getItem('cap-event-selected-event-id');
+            if (storedId) {
+                const found = appState.events.find(e => String(e.id) === String(storedId));
+                if (found) {
+                    appState.selectedEvent = found;
+                    appState.selectedInprocessingEvent = found.id;
+                }
+            }
+        }
+
         if (appState.selectedEvent && appState.isOnline && window.offlineStore) {
             try {
                 const accommodations = await (typeof getEventAccommodations === 'function' ? getEventAccommodations(appState.selectedEvent.id) : []);
@@ -458,6 +470,7 @@ function setAdminTab(tab) {
 
 function returnToEvents() {
     appState.selectedEvent = null;
+    localStorage.removeItem('cap-event-selected-event-id');
     appState.currentView = 'events';
     appState.inprocessProfile = null;
     appState.inprocessMessage = '';
@@ -2323,6 +2336,7 @@ async function selectEvent(eventId, targetView = 'dashboard') {
     try {
         const event = await getEvent(eventId);
         appState.selectedEvent = event;
+        localStorage.setItem('cap-event-selected-event-id', eventId);
         appState.currentView = targetView;
         appState.roster = await getRoster(eventId);
         appState.selectedInprocessingEvent = eventId;

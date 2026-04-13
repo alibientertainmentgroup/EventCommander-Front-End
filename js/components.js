@@ -192,7 +192,7 @@ function renderInprocessing(events, personnel, stations, checkins) {
     const profileHtml = (typeof appState !== 'undefined' && appState.inprocessProfile) ? renderInprocessingProfile(appState.inprocessProfile) : '';
     const stationsHtml = (typeof appState !== 'undefined' && appState.inprocessProfile)
         ? renderInprocessingStationsForProfile(stations || [], appState.inprocessProfile, checkins || [])
-        : '<div class="empty-state"><div class="empty-state-text">Select an event to view inprocessing stations</div></div>';
+        : '<div class="empty-state"><div class="empty-state-text">Stations will appear after a lookup.</div></div>';
 
     const approvalWarning = appState.approvalWarning ? `
         <div class="warning-banner" style="background: rgba(255,165,0,0.1); border:1px solid rgba(255,165,0,0.6); padding:12px; margin-top:12px;">
