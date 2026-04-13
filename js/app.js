@@ -1828,7 +1828,6 @@ function lookupInprocessingCadet() {
             appState.inprocessMissingCapId = '';
             appState.manualEntryOpen = false;
             appState.inprocessStation = null;
-            resetScannerReady();
         })
         .catch(err => {
             console.error('Inprocessing lookup failed:', err);
@@ -1936,7 +1935,6 @@ async function signInInprocessing(role) {
         appState.inprocessProfile = null;
         appState.inprocessStation = null;
         appState.inprocessMessage = `${role === 'staff' ? 'Staff' : 'Student'} signed in. Ready for next lookup.`;
-        resetScannerReady();
         renderCurrentView();
     } catch (error) {
         console.error('Sign in failed:', error);
