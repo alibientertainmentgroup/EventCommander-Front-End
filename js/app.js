@@ -2310,10 +2310,6 @@ function renderInprocessingProfile(profile) {
                 <div class="profile-field"><div class="profile-label">Emergency Phone</div><div class="profile-value">${profile.emergencyPhone || 'N/A'}</div></div>
                 <div class="profile-field"><div class="profile-label">Email</div><div class="profile-value">${profile.email || 'N/A'}</div></div>
             </div>
-            <div class="flex gap-2" style="margin-top:12px;">
-                <button class="btn btn-blue" onclick="signInInprocessing('${(profile.memberType || '').toLowerCase() === 'senior' ? 'staff' : 'student'}')">Sign In</button>
-                ${appState.roster.some(r => normalizeCapId(r.cap_id) === normalizeCapId(profile.capId) && !r.signed_out_at) ? `<button class="btn btn-outline" onclick="signOutInprocessing()">Sign Out</button>` : ''}
-            </div>
         </div>
         <div class="profile-section">
             <div class="resource-header status-blue">ACCOMMODATIONS</div>
