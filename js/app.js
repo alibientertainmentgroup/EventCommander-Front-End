@@ -2329,20 +2329,25 @@ function renderInprocessingProfile(profile) {
         </div>
         <div class="profile-section">
             <div class="resource-header status-blue">ALLERGIES</div>
-            ${allergies.length ? `<div class="profile-grid">
-                ${allergies.map(a => `
-                    <div class="profile-field"><div class="profile-label">Allergy</div><div class="profile-value">${a.allergy_name || 'N/A'}</div></div>
-                    <div class="profile-field"><div class="profile-label">Type</div><div class="profile-value">${a.allergy_type || 'N/A'}</div></div>
-                    <div class="profile-field"><div class="profile-label">Anaphylaxis Risk</div><div class="profile-value">${fmtYes(a.is_anaphyaxis)}</div></div>
-                    <div class="profile-field"><div class="profile-label">Has EpiPen</div><div class="profile-value">${fmtYes(a.has_epipen)}</div></div>
-                    <div class="profile-field"><div class="profile-label">Has Inhaler</div><div class="profile-value">${fmtYes(a.has_albuterol_inhaler)}</div></div>
-                    <div class="profile-field"><div class="profile-label">Typical Reactions</div><div class="profile-value">${a.typical_reactions || 'N/A'}</div></div>
-                    <div class="profile-field"><div class="profile-label">Treatments</div><div class="profile-value">${a.treatments || 'N/A'}</div></div>
-                    <div class="profile-field"><div class="profile-label">Emergency Contact</div><div class="profile-value">${a.emergency_contact || 'N/A'}</div></div>
-                    <div class="profile-field"><div class="profile-label">Emergency Phone</div><div class="profile-value">${a.contact_name || 'N/A'}</div></div>
-                    <div class="profile-field"><div class="profile-label">Other Medications</div><div class="profile-value">${a.other_medications || 'N/A'}</div></div>
+            ${allergies.length ? `
+                ${allergies.map((a, idx) => `
+                    <div class="card" style="margin-bottom:10px;">
+                        <div class="resource-name">Allergy ${idx + 1}: ${a.allergy_name || 'N/A'}</div>
+                        <div class="profile-grid">
+                            <div class="profile-field"><div class="profile-label">Type</div><div class="profile-value">${a.allergy_type || 'N/A'}</div></div>
+                            <div class="profile-field"><div class="profile-label">Anaphylaxis Risk</div><div class="profile-value">${fmtYes(a.is_anaphyaxis)}</div></div>
+                            <div class="profile-field"><div class="profile-label">Has EpiPen</div><div class="profile-value">${fmtYes(a.has_epipen)}</div></div>
+                            <div class="profile-field"><div class="profile-label">Has Inhaler</div><div class="profile-value">${fmtYes(a.has_albuterol_inhaler)}</div></div>
+                            <div class="profile-field"><div class="profile-label">Typical Reactions</div><div class="profile-value">${a.typical_reactions || 'N/A'}</div></div>
+                            <div class="profile-field"><div class="profile-label">Treatments</div><div class="profile-value">${a.treatments || 'N/A'}</div></div>
+                            <div class="profile-field"><div class="profile-label">Emergency Contact</div><div class="profile-value">${a.emergency_contact || 'N/A'}</div></div>
+                            <div class="profile-field"><div class="profile-label">Emergency Phone</div><div class="profile-value">${a.contact_name || 'N/A'}</div></div>
+                            <div class="profile-field"><div class="profile-label">Other Medications</div><div class="profile-value">${a.other_medications || 'N/A'}</div></div>
+                            <div class="profile-field"><div class="profile-label">Other Reactions</div><div class="profile-value">${a.other_reactions || 'N/A'}</div></div>
+                        </div>
+                    </div>
                 `).join('')}
-            </div>` : '<div class="resource-details">No allergies on file.</div>'}
+            ` : '<div class="resource-details">No allergies on file.</div>'}
         </div>
     `;
 }
