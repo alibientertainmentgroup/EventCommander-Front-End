@@ -274,7 +274,7 @@ function renderInprocessing(events, personnel, stations, checkins) {
 
 function renderInprocessingStations(stations, personnel, checkins) {
     if (stations.length === 0) {
-        return '<div class="empty-state"><div class="empty-state-text">No stations configured for this event</div></div>';
+        return '';
     }
 
     return `
