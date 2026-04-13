@@ -341,7 +341,10 @@ function renderCurrentView() {
     const contentArea = document.getElementById('contentArea');
     let viewHtml = '';
     let postRender = null;
-
+    const ensureEvent = () => {
+        appState.currentView = 'events';
+        return renderEvents(appState.events);
+    };
     if (isPrivileged() && !appState.selectedEvent) {
         viewHtml = renderAdminHome(appState.events);
         contentArea.innerHTML = renderSandboxBanner() + viewHtml;
@@ -372,11 +375,16 @@ function renderCurrentView() {
             }
             break;
         case 'inprocessing':
-            viewHtml = renderInprocessing(appState.events, appState.personnel, appState.stations, appState.checkins);
-            postRender = () => {
-                focusCapInput();
-                attachCapEnterHandler();
-            };
+            if (!appState.selectedEvent) {
+                viewHtml = ensureEvent();
+            } else {
+                viewHtml = renderInprocessing(appState.events, appState.personnel, appState.stations, appState.checkins);
+                postRender = () => {
+                    loadInprocessingStations(appState.selectedEvent.id);
+                    focusCapInput();
+                    attachCapEnterHandler();
+                };
+            }
             break;
         case 'outprocessing':
             viewHtml = renderOutprocessing();
@@ -386,7 +394,7 @@ function renderCurrentView() {
                 const eventActivities = appState.activities.filter(a => a.event_id === appState.selectedEvent.id);
                 viewHtml = renderAssets(appState.assets, eventActivities, appState.timelineDate);
             } else {
-                viewHtml = renderAssets(appState.assets, appState.activities, appState.timelineDate);
+                viewHtml = ensureEvent();
             }
             break;
         case 'personnel':
@@ -394,17 +402,17 @@ function renderCurrentView() {
                 const eventActivities = appState.activities.filter(a => a.event_id === appState.selectedEvent.id);
                 viewHtml = renderPersonnel(appState.personnel, eventActivities, appState.timelineDate);
             } else {
-                viewHtml = renderPersonnel(appState.personnel, appState.activities, appState.timelineDate);
+                viewHtml = ensureEvent();
             }
             break;
         case 'roster':
-            viewHtml = renderRoster(appState.roster);
+            viewHtml = appState.selectedEvent ? renderRoster(appState.roster) : ensureEvent();
             break;
         case 'locations':
-            viewHtml = renderLocations(appState.locations);
+            viewHtml = appState.selectedEvent ? renderLocations(appState.locations) : ensureEvent();
             break;
         case 'schedule':
-            viewHtml = renderSchedule(getUserSchedule());
+            viewHtml = appState.selectedEvent ? renderSchedule(getUserSchedule()) : ensureEvent();
             break;
         case 'reports':
             viewHtml = isPrivileged() ? renderReports() : renderNotAuthorized();
@@ -420,7 +428,7 @@ function renderCurrentView() {
             break;
         case 'admin':
             if (!appState.selectedEvent) {
-                viewHtml = renderSelectEventPrompt();
+                viewHtml = ensureEvent();
             } else if (isAdmin()) {
                 viewHtml = renderAdminPanel();
                 postRender = () => loadAllStations();
@@ -430,7 +438,8 @@ function renderCurrentView() {
             break;
     }
     const status = typeof renderStatusIndicator === 'function' ? renderStatusIndicator() : '';
-    contentArea.innerHTML = status + renderSandboxBanner() + viewHtml;
+    const breadcrumb = appState.selectedEvent ? renderEventBreadcrumb(appState.selectedEvent) : '';
+    contentArea.innerHTML = status + renderSandboxBanner() + breadcrumb + viewHtml;
     if (postRender) postRender();
 }
 
@@ -445,6 +454,18 @@ function renderSelectEventPrompt() {
 function setAdminTab(tab) {
     appState.adminTab = tab;
     renderCurrentView();
+}
+
+function returnToEvents() {
+    appState.selectedEvent = null;
+    appState.currentView = 'events';
+    appState.inprocessProfile = null;
+    appState.inprocessMessage = '';
+    appState.approvalWarning = null;
+    appState.manualEntryOpen = false;
+    appState.inprocessMissingCapId = '';
+    renderCurrentView();
+    updateContextUI();
 }
 
 function openManualEntry() {
@@ -2304,6 +2325,7 @@ async function selectEvent(eventId, targetView = 'dashboard') {
         appState.selectedEvent = event;
         appState.currentView = targetView;
         appState.roster = await getRoster(eventId);
+        appState.selectedInprocessingEvent = eventId;
         updateContextUI();
         renderCurrentView();
     } catch (error) {

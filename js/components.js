@@ -54,6 +54,17 @@ function renderStatusIndicator() {
     return `<div id="connectionIndicator" class="${cls}" style="position:fixed; top:12px; right:12px; z-index:9999; padding:6px 10px; border-radius:8px; font-weight:600; background:${appState.isOnline ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.12)'}; color:${appState.isOnline ? '#16a34a' : '#dc2626'}; display:flex; align-items:center;">${text}${button}</div>`;
 }
 
+function renderEventBreadcrumb(event) {
+    if (!event) return '';
+    return `
+        <div class="breadcrumb" style="display:flex; align-items:center; gap:8px; margin:8px 0 12px 0;">
+            <button class="btn btn-ghost btn-small" onclick="returnToEvents()">← Events</button>
+            <span class="resource-details">/</span>
+            <span class="resource-name">${event.title}</span>
+        </div>
+    `;
+}
+
 
 function renderAdminHome(events) {
     return `
@@ -178,10 +189,6 @@ function renderEvents(events) {
 // ==================== INPROCESSING COMPONENTS ====================
 
 function renderInprocessing(events, personnel, stations, checkins) {
-    const eventOptions = events.map(e => 
-        `<option value="${e.id}">${e.title}</option>`
-    ).join('');
-
     const profileHtml = (typeof appState !== 'undefined' && appState.inprocessProfile) ? renderInprocessingProfile(appState.inprocessProfile) : '';
     const stationsHtml = (typeof appState !== 'undefined' && appState.inprocessProfile)
         ? renderInprocessingStationsForProfile(stations || [], appState.inprocessProfile, checkins || [])
@@ -236,14 +243,6 @@ function renderInprocessing(events, personnel, stations, checkins) {
     return `
         <div class="page-header">
             <h2 class="page-title">INPROCESSING</h2>
-        </div>
-
-        <div class="card mb-4">
-            <label class="form-label">Select Event</label>
-            <select class="form-select" id="inprocessingEventSelect" onchange="loadInprocessingStations(this.value)">
-                <option value="">Choose an event...</option>
-                ${eventOptions}
-            </select>
         </div>
 
         ${profileHtml}
