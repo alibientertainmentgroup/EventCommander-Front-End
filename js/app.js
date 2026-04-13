@@ -1911,19 +1911,21 @@ async function signInInprocessing(role) {
         const now = new Date();
         showLoading();
         try {
+        let updatedEntry = null;
         if (latestEntry) {
-            latestEntry.event_id = appState.selectedEvent.id;
-            latestEntry.rank = profile.rank || '';
-            latestEntry.name = fullName || '';
-            latestEntry.role = role;
-            latestEntry.signed_in_at = now.toISOString();
-            latestEntry.signed_out_at = null;
-            latestEntry.stations = buildDefaultStations();
-            latestEntry.flags = latestEntry.flags || [];
-            latestEntry.profile = { ...profile };
-            await updateRosterEntry(latestEntry);
+            updatedEntry = { ...latestEntry };
+            updatedEntry.event_id = appState.selectedEvent.id;
+            updatedEntry.rank = profile.rank || '';
+            updatedEntry.name = fullName || '';
+            updatedEntry.role = role;
+            updatedEntry.signed_in_at = now.toISOString();
+            updatedEntry.signed_out_at = null;
+            updatedEntry.stations = buildDefaultStations();
+            updatedEntry.flags = updatedEntry.flags || [];
+            updatedEntry.profile = { ...profile };
+            await updateRosterEntry(updatedEntry);
         } else {
-            const entry = {
+            updatedEntry = {
                 event_id: appState.selectedEvent.id,
                 cap_id: capId,
                 rank: profile.rank || '',
@@ -1935,12 +1937,23 @@ async function signInInprocessing(role) {
                 flags: [],
                 profile: { ...profile }
             };
-            await addRosterEntry(entry);
+            await addRosterEntry(updatedEntry);
         }
         appState.roster = await getRoster(appState.selectedEvent.id);
-        appState.inprocessProfile = null;
-        appState.inprocessStation = null;
-        appState.inprocessMessage = `${role === 'staff' ? 'Staff' : 'Student'} signed in. Ready for next lookup.`;
+        // keep profile visible and refresh stations/flags from roster
+        appState.inprocessProfile = {
+            ...profile,
+            name: updatedEntry.name,
+            full_name: updatedEntry.name,
+            stations: updatedEntry.stations,
+            flags: updatedEntry.flags
+        };
+        const stationKeys = Object.keys(updatedEntry.stations || {});
+        if (!appState.inprocessStation && stationKeys.length) {
+            appState.inprocessStation = stationKeys[0];
+        }
+        await loadInprocessingStations(appState.selectedEvent.id);
+        appState.inprocessMessage = `${role === 'staff' ? 'Staff' : 'Student'} signed in.`;
         renderCurrentView();
     } catch (error) {
         console.error('Sign in failed:', error);
