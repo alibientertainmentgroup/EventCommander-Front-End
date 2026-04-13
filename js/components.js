@@ -320,26 +320,39 @@ function renderInprocessingStationsForProfile(stations, profile, checkins) {
     if (!stations || stations.length === 0) {
         return '<div class="empty-state"><div class="empty-state-text">No stations configured for this event</div></div>';
     }
+    const selected = appState.inprocessStation;
+    const stationLookup = profile.stations || {};
 
     return `
         <div class="space-y-4">
-            ${stations.map(station => {
-                const stationCheckins = (checkins || []).filter(c => c.station_id === station.id && String(c.personnel_id) === String(profile.capId));
-                const isChecked = stationCheckins.length > 0;
+            <div class="flex gap-2" style="flex-wrap: wrap; margin-bottom:8px;">
+                ${stations.map(station => {
+                    const status = stationLookup[station.name]?.status || 'pending';
+                    const flagged = stationLookup[station.name]?.flagged;
+                    const badge = status === 'complete' ? '✓' : status === 'in_progress' ? '…' : '';
+                    const flagMark = flagged ? '⚑' : '';
+                    const activeClass = selected === station.name ? 'btn-blue' : 'btn-outline';
+                    return `<button class="btn btn-small ${activeClass}" onclick="setInprocessStation('${station.name.replace(/'/g, "\\'")}')">${station.name} ${badge} ${flagMark}</button>`;
+                }).join('')}
+            </div>
+            ${selected ? (() => {
+                const station = stations.find(s => s.name === selected);
+                const note = stationLookup[selected]?.comment || '';
                 return `
                     <div class="card">
-                        <div class="flex-between">
-                            <div>
-                                <div class="resource-name">${station.name}</div>
-                                <div class="resource-details">${station.description || ''}</div>
-                            </div>
-                            <div>
-                                ${isChecked ? `<span class="badge" style="background: rgba(34, 197, 94, 0.2); color: var(--green);">✓ Checked In</span>` : `<button class="btn btn-blue" onclick="checkInPersonnelAtStation('${station.id}', '${profile.capId}')">Check In</button>`}
-                            </div>
+                        <div class="resource-name">${selected}</div>
+                        <div class="resource-details">${station ? station.description || '' : ''}</div>
+                        <div class="form-row" style="margin-top:12px;">
+                            <label class="form-label">Comment</label>
+                            <textarea class="form-textarea" id="stationComment" placeholder="Add a note (optional)">${note || ''}</textarea>
+                        </div>
+                        <div class="flex gap-2" style="margin-top:12px;">
+                            <button class="btn btn-blue" onclick="completeStation()">Complete</button>
+                            <button class="btn btn-outline" onclick="openFlagModal()">Flag</button>
                         </div>
                     </div>
                 `;
-            }).join('')}
+            })() : ''}
         </div>
     `;
 }

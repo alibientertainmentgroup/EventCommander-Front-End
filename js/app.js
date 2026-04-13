@@ -1802,7 +1802,9 @@ function lookupInprocessingCadet() {
                 emergencyPhone: roster.emergency_contact_phone,
                 email: roster.email,
                 accommodations,
-                allergies
+                allergies,
+                stations: roster.stations || buildDefaultStations(),
+                flags: roster.flags || []
             };
             const unitYes = isYes(roster.unit_approved);
             const parentRaw = roster.parent_approved || '';
@@ -1824,6 +1826,10 @@ function lookupInprocessingCadet() {
                 appState.approvalWarning = null;
                 appState.inprocessProfile = profile;
                 appState.inprocessMessage = '';
+                if (!appState.inprocessStation) {
+                    const keys = Object.keys(profile.stations || {});
+                    appState.inprocessStation = keys[0] || null;
+                }
             }
             appState.inprocessMissingCapId = '';
             appState.manualEntryOpen = false;
@@ -1984,6 +1990,10 @@ async function completeStation() {
     }
     entry.stations = entry.stations || buildDefaultStations();
     entry.stations[appState.inprocessStation] = entry.stations[appState.inprocessStation] || { status: 'pending', flagged: false };
+    const commentEl = document.getElementById('stationComment');
+    if (commentEl) {
+        entry.stations[appState.inprocessStation].comment = commentEl.value.trim();
+    }
     entry.stations[appState.inprocessStation].status = 'complete';
     if (appState.inprocessStation === 'Complete Inprocessing') {
         entry.inprocess_completed_at = entry.inprocess_completed_at || new Date().toISOString();
