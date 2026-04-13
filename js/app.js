@@ -1909,8 +1909,6 @@ async function signInInprocessing(role) {
             latestEntry.event_id = appState.selectedEvent.id;
             latestEntry.rank = profile.rank || '';
             latestEntry.name = fullName || '';
-            latestEntry.firstName = firstName;
-            latestEntry.lastName = lastName;
             latestEntry.role = role;
             latestEntry.signed_in_at = now.toISOString();
             latestEntry.signed_out_at = null;
@@ -1924,8 +1922,6 @@ async function signInInprocessing(role) {
                 cap_id: capId,
                 rank: profile.rank || '',
                 name: fullName || '',
-                firstName,
-                lastName,
                 role,
                 signed_in_at: now.toISOString(),
                 signed_out_at: null,
