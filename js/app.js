@@ -1897,11 +1897,13 @@ async function signInInprocessing(role) {
         return;
     }
     const activeEntry = appState.roster.find(r => normalizeCapId(r.cap_id) === capId && !r.signed_out_at);
+    console.log('signIn check', { capId, activeEntryExists: !!activeEntry });
     if (activeEntry) {
         alert('This CAP ID is already signed in.');
         return;
     }
     const previousEntry = appState.roster.find(r => normalizeCapId(r.cap_id) === capId && r.signed_out_at);
+    console.log('previousEntry', previousEntry);
         const firstName = profile.firstName || profile.name_first || '';
         const lastName = profile.lastName || profile.name_last || '';
         const fullName = profile.name || `${firstName} ${lastName}`.trim();
