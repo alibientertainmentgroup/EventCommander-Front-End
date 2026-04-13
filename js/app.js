@@ -1871,9 +1871,9 @@ async function signInInprocessing(role) {
         return;
     }
     const previousEntry = appState.roster.find(r => normalizeCapId(r.cap_id) === capId && r.signed_out_at);
-    const firstName = appState.inprocessProfile.firstName || '';
-    const lastName = appState.inprocessProfile.lastName || '';
-    const fullName = `${firstName} ${lastName}`.trim();
+    const firstName = appState.inprocessProfile.firstName || appState.inprocessProfile.name_first || '';
+    const lastName = appState.inprocessProfile.lastName || appState.inprocessProfile.name_last || '';
+    const fullName = appState.inprocessProfile.name || `${firstName} ${lastName}`.trim();
     const now = new Date();
     showLoading();
     try {
