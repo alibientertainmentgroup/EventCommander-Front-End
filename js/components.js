@@ -332,12 +332,13 @@ function renderInprocessingStationsForProfile(stations, profile, checkins) {
                     const badge = status === 'complete' ? '✓' : status === 'in_progress' ? '…' : '';
                     const flagMark = flagged ? '⚑' : '';
                     const activeClass = selected === station.name ? 'btn-blue' : 'btn-outline';
-                    return `<button class="btn ${activeClass}" style="min-width:140px;" onclick="setInprocessStation('${station.name.replace(/'/g, "\\'")}')">${station.name} ${badge} ${flagMark}</button>`;
+                    return `<button class="btn ${activeClass}" style="min-width:150px; flex:0 0 auto; display:inline-flex; align-items:center; justify-content:center; width:auto;" onclick="setInprocessStation('${station.name.replace(/'/g, "\\'")}')">${station.name} ${badge} ${flagMark}</button>`;
                 }).join('')}
             </div>
             ${selected ? (() => {
                 const station = stations.find(s => s.name === selected);
                 const note = stationLookup[selected]?.comment || '';
+                const stationFlags = (profile.flags || []).filter(f => f.station === selected);
                 return `
                     <div class="card">
                         <div class="resource-name">${selected}</div>
@@ -350,10 +351,10 @@ function renderInprocessingStationsForProfile(stations, profile, checkins) {
                             <button class="btn btn-blue" onclick="completeStation()">Complete</button>
                             <button class="btn btn-outline" onclick="openFlagModal()">Flag</button>
                         </div>
-                        ${Array.isArray(stationLookup[selected]?.flags) && stationLookup[selected].flags.length ? `
+                        ${stationFlags.length ? `
                             <div class="resource-details" style="margin-top:8px;">Flags:</div>
                             <div class="resource-list">
-                                ${stationLookup[selected].flags.map(f => `
+                                ${stationFlags.map(f => `
                                     <div class="resource-item">
                                         <div class="resource-name">${f.reason || 'Flag'}</div>
                                         <div class="resource-details">${f.owner ? `Owner: ${f.owner}` : ''}</div>
