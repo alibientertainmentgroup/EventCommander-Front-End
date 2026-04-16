@@ -4,8 +4,18 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Event Command System</title>
-    <link rel="stylesheet" href="css/styles.css?v=20260204d">
+    <link rel="stylesheet" href="css/styles.css?v=20260415e">
     <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&display=swap" rel="stylesheet">
+    <link rel="manifest" href="./manifest.json">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="theme-color" content="#3b82f6">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Event CMD">
+    <link rel="apple-touch-icon" href="./icons/icon-192.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="./icons/icon-32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="./icons/icon-16.png">
+    <link rel="icon" type="image/x-icon" href="./icons/favicon.ico">
 </head>
 <body>
     <!-- Login Screen -->
@@ -26,12 +36,21 @@
                     <label>CAP MEMBER ID</label>
                     <input type="text" id="capIdInput" placeholder="Enter your CAP ID" required>
                 </div>
+                <div class="form-group">
+                    <label>PIN (8 digits)</label>
+                    <input type="password" id="capPinInput" placeholder="Enter your PIN" pattern="[0-9]{8}" minlength="8" maxlength="8" inputmode="numeric" required>
+                </div>
                 
                 <button type="submit" class="btn-primary">ACCESS SYSTEM</button>
             </form>
             
             <div class="login-footer">
                 AUTHORIZED PERSONNEL ONLY
+            </div>
+            <div id="installPrompt" style="margin-top:12px; text-align:center; border:1px solid rgba(255,255,255,0.08); padding:10px; border-radius:8px;">
+                <div id="installStatus" class="resource-details" style="margin-bottom:6px;"></div>
+                <button id="installButton" class="btn-primary" type="button" style="display:none;">Install App</button>
+                <div id="installMessage" class="resource-details" style="margin-top:8px;"></div>
             </div>
         </div>
     </div>
@@ -87,11 +106,32 @@
                     </svg>
                     Outprocessing
                 </button>
+                <button class="nav-item" data-view="billeting" data-privileged="true">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M3 21h18"></path>
+                        <path d="M5 21V8l7-5 7 5v13"></path>
+                        <path d="M9 21v-6h6v6"></path>
+                    </svg>
+                    Billeting Planning
+                </button>
+                <button class="nav-item" data-view="orgchart">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="5" r="2"></circle>
+                        <circle cx="6" cy="12" r="2"></circle>
+                        <circle cx="18" cy="12" r="2"></circle>
+                        <circle cx="12" cy="19" r="2"></circle>
+                        <line x1="12" y1="7" x2="6" y2="10"></line>
+                        <line x1="12" y1="7" x2="18" y2="10"></line>
+                        <line x1="6" y1="14" x2="12" y2="17"></line>
+                        <line x1="18" y1="14" x2="12" y2="17"></line>
+                    </svg>
+                    Org Chart
+                </button>
                 <button class="nav-item" data-view="assets" data-privileged="true">
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
                     </svg>
-                    Assets
+                    Assets &amp; Vehicles
                 </button>
                 <button class="nav-item" data-view="personnel" data-privileged="true">
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -100,7 +140,7 @@
                         <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
                         <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
                     </svg>
-                    Personnel
+                    Personnel &amp; Assignments
                 </button>
                 <button class="nav-item" data-view="roster" data-privileged="true">
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -204,9 +244,81 @@
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     
     <!-- App Scripts -->
-    <script src="js/config.js?v=20260204d"></script>
-    <script src="js/supabase-client.js?v=20260205a"></script>
-    <script src="js/components.js?v=20260205a"></script>
-    <script src="js/app.js?v=20260205a"></script>
+    <script src="./js/config.js?v=20260204d"></script>
+    <script src="./js/supabase-client.js?v=20260415m"></script>
+    <script src="./js/components.js?v=20260415r"></script>
+    <script src="./js/app.js?v=20260415x"></script>
+    <script>
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('./service-worker.js')
+        .then(reg => console.log('Service Worker registered', reg.scope))
+        .catch(err => console.log('Service Worker registration failed:', err));
+    }
+
+    let deferredPrompt = null;
+    const installDiv = document.getElementById('installPrompt');
+    const installBtn = document.getElementById('installButton');
+    const installMsg = document.getElementById('installMessage');
+    const isiOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+    const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone;
+
+    // Default state: show container, hide button until prompt available
+    if (installDiv) installDiv.style.display = 'block';
+    if (installBtn) installBtn.style.display = 'none';
+    if (installMsg) installMsg.textContent = '';
+
+    window.addEventListener('beforeinstallprompt', (e) => {
+      e.preventDefault();
+      deferredPrompt = e;
+      if (installDiv) installDiv.style.display = 'block';
+      if (installBtn) installBtn.style.display = 'inline-block';
+      if (installMsg) installMsg.textContent = 'Tap Install to add the app to your home screen.';
+    });
+
+    if (installBtn) {
+      installBtn.addEventListener('click', async () => {
+        if (!deferredPrompt) return;
+        deferredPrompt.prompt();
+        const { outcome } = await deferredPrompt.userChoice;
+        console.log('Install prompt outcome:', outcome);
+        deferredPrompt = null;
+        installDiv.style.display = 'none';
+      });
+    }
+
+    // iOS never fires beforeinstallprompt; show instructions
+    if (isiOS && !isStandalone && installDiv) {
+      installDiv.style.display = 'block';
+      if (installMsg) {
+        installMsg.textContent = 'On iPhone/iPad: tap Share, then “Add to Home Screen”.';
+      }
+      if (installBtn) installBtn.style.display = 'none';
+    }
+
+    // Fallback: if no prompt after a few seconds, show guidance
+    setTimeout(() => {
+      if (!deferredPrompt && !isiOS && !isStandalone && installDiv) {
+        installDiv.style.display = 'block';
+        if (installMsg) {
+          installMsg.textContent = 'In your browser menu, choose “Install app” or “Add to Home screen”.';
+        }
+        if (installBtn) installBtn.style.display = 'none';
+      }
+    }, 4000);
+
+    // Diagnostics: check manifest/icon reachability to explain missing prompt
+    (async () => {
+      try {
+        const manifestResp = await fetch('./manifest.json');
+        console.log('Manifest fetch', manifestResp.status);
+        const icon192 = await fetch('./icons/icon-192.png');
+        console.log('icon-192 fetch', icon192.status);
+        const icon512 = await fetch('./icons/icon-512.png');
+        console.log('icon-512 fetch', icon512.status);
+      } catch (err) {
+        console.log('PWA diagnostics failed:', err);
+      }
+    })();
+    </script>
 </body>
 </html>

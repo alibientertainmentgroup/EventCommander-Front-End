@@ -968,6 +968,90 @@ body {
     border-color: rgba(59, 130, 246, 0.7);
 }
 
+.org-chart-shell {
+    padding: 14px;
+}
+
+.org-chart-container {
+  display: flex;
+  justify-content: center;
+  padding: 20px;
+  overflow-x: auto;
+}
+
+.org-node {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.org-children {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  position: relative;
+  margin-top: 10px;
+}
+
+.org-children-row {
+  display: flex;
+  gap: 40px;
+  position: relative;
+}
+
+.org-children-row::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: #3b82f6;
+}
+
+.org-child {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.org-card {
+  border: 2px solid #3b82f6;
+  background: rgba(59, 130, 246, 0.1);
+  padding: 12px 16px;
+  border-radius: 8px;
+  min-width: 150px;
+  text-align: center;
+  cursor: pointer;
+}
+
+.org-card-title {
+  font-weight: 700;
+}
+
+.org-card-details {
+  margin-top: 6px;
+  font-size: 12px;
+  line-height: 1.35;
+  opacity: 0.95;
+}
+
+.org-card:hover {
+  background: rgba(59, 130, 246, 0.2);
+}
+
+.org-line-down {
+  width: 2px;
+  height: 30px;
+  background: #3b82f6;
+}
+
+.org-line-stub {
+  width: 2px;
+  height: 20px;
+  background: #3b82f6;
+}
+
 .reports-detail {
     min-height: 200px;
 }
@@ -1144,7 +1228,7 @@ body {
 
 .resource-details {
     color: var(--text-secondary);
-    font-size: 14px;
+    font-size: 13px;
 }
 
 .link {
@@ -1156,7 +1240,7 @@ body {
     display: flex;
     align-items: stretch;
     justify-content: space-between;
-    gap: 12px;
+    gap: 10px;
 }
 
 .schedule-info {
@@ -1166,11 +1250,11 @@ body {
 }
 
 .directions-btn {
-    width: 110px;
+    width: 72px;
     height: 100%;
-    min-height: 110px;
-    border-radius: 12px;
-    border: 2px solid var(--border);
+    min-height: 72px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -1186,8 +1270,8 @@ body {
 }
 
 .directions-btn svg {
-    width: 60px;
-    height: 60px;
+    width: 32px;
+    height: 32px;
 }
 
 .stay-icon {
@@ -1222,51 +1306,52 @@ body {
 
 .profile-section {
     background: rgba(30, 41, 59, 0.5);
-    border: 2px solid var(--border);
-    border-radius: 12px;
-    padding: 16px;
-    margin-top: 16px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px;
+    margin-top: 12px;
+    box-shadow: none;
 }
 
 .inprocess-lookup {
-    margin-top: 8px;
+    margin-top: 6px;
     padding: 0;
 }
 
 .profile-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-    gap: 12px;
-    margin-top: 12px;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 10px;
+    margin-top: 10px;
 }
 
 .profile-field {
     background: rgba(15, 23, 42, 0.5);
     border: 1px solid var(--border);
     border-radius: 8px;
-    padding: 10px 12px;
+    padding: 8px 10px;
 }
 
 .profile-label {
     font-family: monospace;
-    font-size: 11px;
+    font-size: 10px;
     color: var(--text-muted);
     text-transform: uppercase;
     letter-spacing: 1px;
 }
 
 .profile-value {
-    margin-top: 6px;
-    font-size: 14px;
+    margin-top: 4px;
+    font-size: 12px;
     color: var(--text-primary);
     word-break: break-word;
 }
 
 .station-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-    gap: 10px;
-    margin-top: 12px;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 8px;
+    margin-top: 10px;
 }
 
 .station-btn {
@@ -1274,12 +1359,12 @@ body {
 }
 
 .schedule-item .resource-name {
-    font-size: 22px;
+    font-size: 16px;
     line-height: 1.2;
 }
 
 .schedule-item .resource-details {
-    font-size: 20px;
+    font-size: 13px;
     line-height: 1.25;
 }
 
@@ -1770,6 +1855,107 @@ body {
     cursor: pointer;
 }
 
+/* Mobile scale + density tweaks */
+@media (max-width: 640px) {
+    html { font-size: 12px; }
+    body { font-size: 12px; padding: 0 6px; }
+
+    .login-container { padding: 8px; }
+    .login-box { padding: 18px; border-radius: 8px; }
+    .login-header { margin-bottom: 16px; }
+    .login-icon { width: 42px; height: 42px; }
+    .form-group label { font-size: 10px; }
+    .form-group input { padding: 8px 10px; font-size: 12px; }
+    .btn-primary { padding: 8px 12px; font-size: 11px; letter-spacing: 1px; }
+    .login-footer { margin-top: 14px; padding-top: 12px; font-size: 9px; }
+
+    .app-container { flex-direction: row; }
+    .sidebar {
+        width: 240px;
+        max-width: 80vw;
+        position: fixed;
+        height: 100vh;
+        left: 0;
+        top: 0;
+        padding: 12px 10px;
+        border-right: 2px solid var(--border-blue);
+        transform: translateX(-100%);
+        transition: transform 0.25s ease;
+    }
+    .app-container.sidebar-open .sidebar {
+        transform: translateX(0);
+    }
+    .main-content { margin-left: 0; padding: 6px 6px 12px; }
+    .mobile-topbar { padding: 2px 0; }
+    .breadcrumb { margin: 6px 0; }
+
+    .page-title { font-size: 18px; }
+    .page-subtitle { font-size: 11px; }
+    h1, h2, h3 { line-height: 1.2; }
+
+    .card, .resource-item, .timeline, .resource-section, .dashboard-card, .stats-card {
+        margin: 6px 0;
+        padding: 10px;
+        border-radius: 8px;
+    }
+    .resource-name { font-size: 13px; }
+    .resource-details { font-size: 11px; }
+    .badge { font-size: 10px; padding: 2px 5px; }
+    .form-input, .form-select, .form-textarea { font-size: 12px; padding: 7px 8px; }
+    .btn, .btn-blue, .btn-outline, .btn-ghost, .btn-secondary { padding: 7px 10px; font-size: 11px; }
+    .tag-input-row { gap: 4px; flex-wrap: wrap; }
+    .timeline-row-label { font-size: 11px; }
+    .timeline-hour { font-size: 9px; }
+
+    .breadcrumb, .toggle-row, .status-indicator { font-size: 12px; }
+    .resource-section h3 { font-size: 13px; }
+    .metric-value { font-size: 18px; }
+}
+
+/* Deeper mobile shrink for key blocks */
+@media (max-width: 640px) {
+    .page-title { font-size: 18px; }
+    .page-subtitle { font-size: 11px; }
+    .card { padding: 10px; border-radius: 8px; }
+    .metric-card { padding: 8px; border-radius: 8px; }
+    .metric-value { font-size: 16px; }
+    .metric-label { font-size: 9px; }
+    .events-grid { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px; }
+    .event-card { padding: 10px; border-radius: 8px; }
+    .event-title { font-size: 16px; }
+    .metrics-grid { gap: 8px; margin-bottom: 10px; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
+    .resource-item { padding: 8px; border-radius: 8px; }
+    .kanban-card, .ticket-card { padding: 8px; border-radius: 8px; }
+    .btn-large { padding: 8px 10px; font-size: 11px; }
+}
+}
+/* Mobile scale-down */
+@media (max-width: 640px) {
+    html { font-size: 14px; }
+    body { font-size: 14px; }
+    .login-container { padding: 12px; }
+    .login-box { padding: 24px; border-radius: 10px; }
+    .login-header { margin-bottom: 24px; }
+    .login-icon { width: 48px; height: 48px; }
+    .form-group input { padding: 10px 12px; font-size: 13px; }
+    .form-group label { font-size: 11px; }
+    .btn-primary { padding: 10px 16px; font-size: 12px; letter-spacing: 1.5px; }
+    .login-footer { margin-top: 20px; padding-top: 16px; font-size: 10px; }
+
+    .sidebar { width: 220px; }
+    .nav-item { padding: 10px 12px; font-size: 13px; }
+    .btn-secondary, .btn-outline, .btn-ghost { padding: 8px 12px; font-size: 12px; }
+    .main-content { margin-left: 0; padding: 12px; }
+    .page-title { font-size: 20px; }
+    .page-subtitle { font-size: 12px; }
+    .resource-name { font-size: 14px; }
+    .resource-details { font-size: 12px; }
+    .badge { font-size: 11px; padding: 3px 6px; }
+    .form-input, .form-select, .form-textarea { font-size: 13px; padding: 8px 10px; }
+    .btn, .btn-blue, .btn-outline, .btn-ghost { padding: 8px 12px; font-size: 12px; }
+    .timeline-row-label { font-size: 12px; }
+    .timeline-hour { font-size: 10px; }
+}
 
 
 

@@ -6,7 +6,8 @@ const ROLE_COLORS = {
     'hso': { bg: 'rgba(245, 158, 11, 0.7)', border: 'rgba(245, 158, 11, 0.95)' },
     'support staff': { bg: 'rgba(139, 92, 246, 0.7)', border: 'rgba(139, 92, 246, 0.95)' },
     'orientation pilot': { bg: 'rgba(14, 116, 144, 0.7)', border: 'rgba(14, 116, 144, 0.95)' },
-    'to': { bg: 'rgba(244, 63, 94, 0.7)', border: 'rgba(244, 63, 94, 0.95)' },
+    // TO is now neutral gray so availability can use red without conflict
+    'to': { bg: 'rgba(107, 114, 128, 0.7)', border: 'rgba(107, 114, 128, 0.95)' },
     'other': { bg: 'rgba(148, 163, 184, 0.7)', border: 'rgba(148, 163, 184, 0.95)' }
 };
 
@@ -190,9 +191,10 @@ function renderEvents(events) {
 
 function renderInprocessing(events, personnel, stations, checkins) {
     const profileHtml = (typeof appState !== 'undefined' && appState.inprocessProfile) ? renderInprocessingProfile(appState.inprocessProfile) : '';
-    const stationsHtml = (typeof appState !== 'undefined' && appState.inprocessProfile)
+    const activeEntry = (typeof getActiveRosterEntry === 'function') ? getActiveRosterEntry() : null;
+    const stationsHtml = (typeof appState !== 'undefined' && appState.inprocessProfile && activeEntry)
         ? renderInprocessingStationsForProfile(stations || [], appState.inprocessProfile, checkins || [])
-        : '<div class="empty-state"><div class="empty-state-text">Stations will appear after a lookup.</div></div>';
+        : '';
 
     const approvalWarning = appState.approvalWarning ? `
         <div class="warning-banner" style="background: rgba(255,165,0,0.1); border:1px solid rgba(255,165,0,0.6); padding:12px; margin-top:12px;">
@@ -248,8 +250,14 @@ function renderInprocessing(events, personnel, stations, checkins) {
             <div class="resource-details">${appState.selectedEvent ? appState.selectedEvent.title : ''}</div>
             <div class="tag-input-row">
                 <input type="text" class="form-input cap-id-input" id="inprocessCapId" placeholder="Enter CAP ID" maxlength="6" inputmode="numeric">
-                <button class="btn btn-blue" onclick="handleInprocessAction()">${checkinLabel}</button>
-                <button class="btn btn-outline btn-small" onclick="resetScannerReady()">Next Person</button>
+                ${!activeEntry ? `<button class="btn btn-blue" onclick="handleInprocessAction()">${checkinLabel}</button>` : `<div class="resource-details" style="font-weight:600;">Already signed in</div>`}
+                <button class="btn btn-outline btn-small" onclick="nextInprocessPerson()">Next Person</button>
+            </div>
+            <div class="form-row" style="margin-top:8px;">
+                <label class="form-label" style="display:flex; align-items:center; gap:6px;">
+                    <input type="checkbox" id="staffOverride">
+                    Mark as Staff
+                </label>
             </div>
             ${appState.inprocessMessage ? `<div class="resource-details" style="margin-top:8px;">${appState.inprocessMessage}</div>` : ''}
         </div>
@@ -261,64 +269,34 @@ function renderInprocessing(events, personnel, stations, checkins) {
         </div>
 
         ${checkinCard}
+
+        ${stationsHtml ? `<div id="inprocessingStationsContainer">${stationsHtml}</div>` : ''}
+
         ${profileHtml}
         ${approvalWarning}
         ${manualPrompt}
         ${manualForm}
-
-        <div id="inprocessingStationsContainer">
-            ${stationsHtml}
-        </div>
     `;
 }
 
 function renderInprocessingStations(stations, personnel, checkins) {
-    if (!appState.inprocessProfile || stations.length === 0) {
-        return '';
-    }
-
-    return `
-        <div class="space-y-4">
-            ${stations.map(station => {
-                const stationCheckins = checkins.filter(c => c.station_id === station.id);
-                const checkedInIds = stationCheckins.map(c => c.personnel_id);
-                
-                return `
-                    <div class="card">
-                        <h3 class="text-xl font-bold text-blue-400 mb-2">${station.name}</h3>
-                        <p class="text-slate-400 text-sm mb-4">${station.description || ''}</p>
-                        
-                        <div class="flex gap-2 mb-4">
-                            <span class="badge badge-blue">${stationCheckins.length} checked in</span>
-                        </div>
-
-                        <div class="resource-list">
-                            ${personnel.map(person => {
-                                const isCheckedIn = checkedInIds.includes(person.id);
-                                return `
-                                    <div class="resource-item flex-between">
-                                        <div>
-                                            <div class="resource-name">${person.name}</div>
-                                            <div class="resource-details">CAP ${person.cap_id}</div>
-                                        </div>
-                                        ${isCheckedIn ? 
-                                            `<span class="badge" style="background: rgba(34, 197, 94, 0.2); color: var(--green);">✓ Checked In</span>` :
-                                            `<button class="btn btn-small btn-blue" onclick="checkInPersonnelAtStation('${station.id}', '${person.id}')">Check In</button>`
-                                        }
-                                    </div>
-                                `;
-                            }).join('')}
-                        </div>
-                    </div>
-                `;
-            }).join('')}
-        </div>
-    `;
+    return ''; // old station/personnel list no longer used
 }
 
 function renderInprocessingStationsForProfile(stations, profile, checkins) {
-    if (!stations || stations.length === 0) {
-        return '<div class="empty-state"><div class="empty-state-text">No stations configured for this event</div></div>';
+    const stationList = Array.isArray(stations) ? [...stations] : [];
+    if (stationList.length) {
+        const hasComplete = stationList.some(s => (s.name || '').toLowerCase() === 'complete inprocessing');
+        if (!hasComplete) {
+            stationList.push({
+                name: 'Complete Inprocessing',
+                description: 'Finish once all stations are complete and flags resolved',
+                station_order: 9999
+            });
+        }
+    }
+    if (!stationList.length) {
+        return '';
     }
     const selected = appState.inprocessStation;
     const stationLookup = profile.stations || {};
@@ -326,19 +304,27 @@ function renderInprocessingStationsForProfile(stations, profile, checkins) {
     return `
         <div class="space-y-4">
             <div class="flex gap-2" style="flex-wrap: wrap; margin-bottom:8px;">
-                ${stations.map(station => {
+                ${stationList.map(station => {
                     const status = stationLookup[station.name]?.status || 'pending';
                     const flagged = stationLookup[station.name]?.flagged;
                     const badge = status === 'complete' ? '✓' : status === 'in_progress' ? '…' : '';
                     const flagMark = flagged ? '⚑' : '';
-                    const activeClass = selected === station.name ? 'btn-blue' : 'btn-outline';
-                    return `<button class="btn ${activeClass}" style="min-width:150px; flex:0 0 auto; display:inline-flex; align-items:center; justify-content:center; width:auto;" onclick="setInprocessStation('${station.name.replace(/'/g, "\\'")}')">${station.name} ${badge} ${flagMark}</button>`;
+                    // Priority: flagged (red) > complete (green) > selected (blue) > default
+                    let btnClass = 'btn-outline';
+                    if (flagged) btnClass = 'btn-red';
+                    else if (status === 'complete') btnClass = 'btn-green';
+                    else if (selected === station.name) btnClass = 'btn-blue';
+                    const extraStyle = btnClass === 'btn-red'
+                        ? 'background:#dc2626;border-color:#dc2626;'
+                        : btnClass === 'btn-green'
+                            ? 'background:#16a34a;border-color:#16a34a;'
+                            : '';
+                    return `<button class="btn ${btnClass}" style="min-width:260px; padding:14px 20px; font-size:16px; flex:0 0 auto; display:inline-flex; align-items:center; justify-content:center; width:auto;${extraStyle}" onclick="setInprocessStation('${station.name.replace(/'/g, "\\'")}')">${station.name} ${badge} ${flagMark}</button>`;
                 }).join('')}
             </div>
             ${selected ? (() => {
-                const station = stations.find(s => s.name === selected);
+                const station = stationList.find(s => s.name === selected);
                 const note = stationLookup[selected]?.comment || '';
-                const stationFlags = (profile.flags || []).filter(f => f.station === selected);
                 return `
                     <div class="card">
                         <div class="resource-name">${selected}</div>
@@ -349,28 +335,37 @@ function renderInprocessingStationsForProfile(stations, profile, checkins) {
                         </div>
                         <div class="flex gap-2" style="margin-top:12px;">
                             <button class="btn btn-blue" onclick="completeStation()">Complete</button>
-                            <button class="btn btn-outline" onclick="openFlagModal()">Flag</button>
+                            <button class="btn btn-outline" onclick="saveFlagFromComment()">Flag</button>
                         </div>
-                        ${stationFlags.length ? `
-                            <div class="resource-details" style="margin-top:8px;">Flags:</div>
-                            <div class="resource-list">
-                                ${stationFlags.map(f => `
-                                    <div class="resource-item">
-                                        <div class="resource-name">${f.reason || 'Flag'}</div>
-                                        <div class="resource-details">${f.owner ? `Owner: ${f.owner}` : ''}</div>
-                                    </div>
-                                `).join('')}
-                            </div>
-                        ` : ''}
                     </div>
                 `;
             })() : ''}
+            ${(profile.flags || []).length ? `
+                <div class="card">
+                    <div class="resource-name">Flags</div>
+                    <div class="resource-list">
+                        ${(profile.flags || []).map((f, idx) => `
+                            <div class="resource-item">
+                                <div class="resource-name">${f.station || 'Station'}</div>
+                                <div class="resource-details">${f.reason || ''}</div>
+                                ${f.owner ? `<div class="resource-details">Owner: ${f.owner}</div>` : ''}
+                                ${f.created_at ? `<div class="resource-details">${new Date(f.created_at).toLocaleString()}</div>` : ''}
+                                ${f.resolved ? `<div class="badge status-green">Resolved</div>` : `
+                                    <div class="flex gap-2" style="margin-top:8px;">
+                                        <button class="btn btn-blue btn-small" onclick="resolveFlagInline(${idx})">Mark Resolved</button>
+                                    </div>
+                                `}
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            ` : ''}
         </div>
     `;
 }
 
 function renderOutprocessing() {
-    const activeProfile = appState.inprocessProfile;
+    const activeProfile = appState.outprocessProfile || null;
     const activeCapId = activeProfile ? (typeof normalizeCapId === 'function' ? normalizeCapId(activeProfile.capId) : String(activeProfile.capId || '').trim()) : '';
     const activeEntry = activeCapId
         ? appState.roster.find(r => {
@@ -393,9 +388,9 @@ function renderOutprocessing() {
             <div class="form-row">
                 <label class="form-label">CAP ID</label>
                 <div class="tag-input-row">
-                    <input type="text" class="form-input cap-id-input" id="inprocessCapId" placeholder="Enter CAP ID" maxlength="6" inputmode="numeric">
-                    <button class="btn btn-blue" onclick="lookupInprocessingCadet()">GO</button>
-                    <button class="btn btn-outline btn-small" onclick="resetScannerReady()">Next Person</button>
+                    <input type="text" class="form-input cap-id-input" id="outprocessCapId" placeholder="Enter CAP ID" maxlength="6" inputmode="numeric" onkeydown="if(event.key==='Enter'){lookupOutprocessingCadet();}" oninput="if(this.value.length>=6){lookupOutprocessingCadet();}">
+                    <button class="btn btn-blue" onclick="lookupOutprocessingCadet()">Lookup</button>
+                    <button class="btn btn-outline btn-small" onclick="nextInprocessPerson()">Next Person</button>
                 </div>
             </div>
             <div class="form-row" style="display:flex; gap:12px; flex-wrap: wrap;">
@@ -403,7 +398,7 @@ function renderOutprocessing() {
                 ${activeProfile && !activeEntry ? `<div class="resource-details">Not currently signed in.</div>` : ''}
             </div>
             <div id="inprocessResult" class="resource-details">
-                ${activeProfile ? renderInprocessingProfile(activeProfile) : (appState.inprocessMessage || 'Google Sheet lookup not connected yet.')}
+                ${activeProfile ? renderInprocessingProfile(activeProfile) : (appState.outprocessMessage || '')}
             </div>
         </div>
     `;
@@ -491,6 +486,7 @@ function renderRoster(roster) {
                         <th>Rank</th>
                         <th>CAP ID</th>
                         <th>Status</th>
+                        <th>Role</th>
                         <th>Sign In</th>
                         <th>Sign Out</th>
                     </tr>
@@ -502,10 +498,11 @@ function renderRoster(roster) {
                             <td>${r.rank || '—'}</td>
                             <td>${r.capId || r.cap_id || 'N/A'}</td>
                             <td>${r.signed_out_at ? 'Signed Out' : 'Signed In'}</td>
+                            <td>${(r.role || '').toLowerCase() === 'staff' ? 'Staff' : 'Student'}</td>
                             <td>${formatSignedIn(r.signed_in_at)}</td>
                             <td>${r.signed_out_at ? formatSignedIn(r.signed_out_at) : ''}</td>
                         </tr>
-                    `).join('') : '<tr><td class="empty-state-text text-center" colspan="6">No roster entries yet</td></tr>'}
+                    `).join('') : '<tr><td class="empty-state-text text-center" colspan="7">No roster entries yet</td></tr>'}
                 </tbody>
             </table>
         </div>
@@ -629,7 +626,7 @@ function renderSchedule(entries) {
                     ${grouped[date].map(item => `
                         <div class="resource-item schedule-item">
                             <div class="schedule-info">
-                                <div class="resource-name">${item.title}${item.role ? ` â€¢ ${item.role}` : ''}${item.stayAtLocation ? ` â€¢ <span class="stay-label">Remain Onsite</span>` : ''}</div>
+                                <div class="resource-name">${item.title}${item.role ? ` • ${item.role}` : ''}${item.stayAtLocation ? ` • <span class="stay-label">Remain Onsite</span>` : ''}</div>
                                 <div class="resource-details">${item.start || 'TBD'}â€“${item.end || 'TBD'}</div>
                                 ${item.asset ? `<div class="resource-details">Asset: ${item.asset.type || item.asset.name} ${item.asset.details || ''}</div>` : ''}
                                 ${item.fromLocation ? `<div class="resource-details">From: ${item.fromLocation}</div>` : ''}
@@ -658,7 +655,7 @@ function renderSchedule(entries) {
 }
 
 function renderStayLabel() {
-    return ` â€¢ <span class="stay-label">Remain Onsite</span>`;
+    return ` • <span class="stay-label">Remain Onsite</span>`;
 }
 
 function calculateInprocessAverage(roster) {
@@ -691,7 +688,12 @@ function renderEventCard(event) {
 
     return `
         <div class="event-card" onclick="selectEvent('${event.id}', 'dashboard')">
-            <h3 class="event-title">${event.title}</h3>
+            <div class="flex-between">
+                <h3 class="event-title">${event.title}</h3>
+                <button class="btn btn-outline btn-small" style="padding:4px 8px;" onclick="event.stopPropagation(); openEventEdit('${event.id}')">
+                    ✏️
+                </button>
+            </div>
             <p class="event-description">${event.description || ''}</p>
             <div class="event-dates">${formatEventDates(event)}</div>
             <span class="event-status status-${event.status}">${event.status.toUpperCase()}</span>
@@ -833,11 +835,11 @@ function renderEventDashboard(event, activities, assets, personnel) {
 // ==================== ASSETS COMPONENTS ====================
 
 function renderAssets(assets, activities, selectedDate) {
-    return renderTimelineView('ASSETS', assets, activities, selectedDate, 'assets');
+    return renderTimelineView('ASSETS & VEHICLES', assets, activities, selectedDate, 'assets');
 }
 
 function renderPersonnel(personnel, activities, selectedDate) {
-    return renderTimelineView('PERSONNEL', personnel, activities, selectedDate, 'personnel');
+    return renderTimelineView('PERSONNEL & ASSIGNMENTS', personnel, activities, selectedDate, 'personnel');
 }
 
 function renderTimelineView(title, rows, activities, selectedDate, type) {
@@ -872,7 +874,7 @@ function renderTimelineView(title, rows, activities, selectedDate, type) {
                         <line x1="12" y1="5" x2="12" y2="19"></line>
                         <line x1="5" y1="12" x2="19" y2="12"></line>
                     </svg>
-                    ADD ASSET
+                    ADD ASSET/VEHICLE
                 </button>
             </div>
         ` : ''}
@@ -921,7 +923,7 @@ function renderTimelineRow(row, activitiesByDate, type, dates) {
     const statusClass = type === 'personnel' ? (signedIn ? 'status-blue' : 'status-red') : '';
     return `
         <div class="timeline-row">
-            <div class="timeline-row-label timeline-clickable ${statusClass}" onclick="${isPrivileged() ? (type === 'assets' ? `openAssetModal('${row.id}')` : `openPersonnelModal('${row.id}')`) : ''}">${type === 'assets' ? `${row.type || row.name} ${row.details || ''}`.trim() : row.name}</div>
+            <div class="timeline-row-label timeline-clickable ${statusClass}" onclick="${isPrivileged() ? (type === 'assets' ? `openAssetModal('${row.id}')` : `openPersonnelModal('${row.id}')`) : ''}">${type === 'assets' ? `${row.name || row.type || 'Asset'}${row.details ? ' — ' + row.details : ''}` : row.name}</div>
             ${dates.map(d => `
                 <div class="timeline-grid">
                     ${buildTimelineBars(row, activitiesByDate[d] || [], type, d).join('')}
@@ -938,16 +940,25 @@ function buildTimelineBars(resource, activities, type, date) {
     const bars = [];
 
     const availability = getAvailabilityWindows(resource, date);
-    const unavailable = buildUnavailableWindows(availability, dayStart, dayEnd);
-    unavailable.forEach(block => {
+    const available = buildAvailableWindows(availability, dayStart, dayEnd);
+    available.forEach(block => {
         const left = Math.max(0, (block.start - dayStart) / total * 100);
         const width = Math.max(1, (block.end - block.start) / total * 100);
-        bars.push(`<div class="timeline-bar timeline-bar-unavailable" style="left:${left}%;width:${width}%;" title="Unavailable"></div>`);
+        bars.push(`<div class="timeline-bar timeline-bar-unavailable" style="left:${left}%;width:${width}%;" title="Available"></div>`);
     });
 
     activities.forEach(activity => {
         const list = type === 'assets' ? (activity.assigned_assets || []) : (activity.assigned_personnel || []);
-        const entries = normalizeAssignmentEntries(list, type).filter(e => e.id === String(resource.id));
+        let entries = normalizeAssignmentEntries(list, type).filter(e => e.id === String(resource.id));
+        // Only show assets on the timeline when they are actually assigned with time + operator,
+        // not merely listed as required.
+        if (type === 'assets') {
+            entries = entries.filter(e =>
+                e.operator_id &&
+                e.assignment_start_time &&
+                e.assignment_end_time
+            );
+        }
         if (!entries.length) return;
 
         entries.forEach(entry => {
@@ -959,7 +970,7 @@ function buildTimelineBars(resource, activities, type, date) {
             const width = Math.max(2, (endMin - startMin) / total * 100);
             const label = activity.title;
             const stayIcon = entry.stay_at_location ? ` ${renderStayLabel()}` : '';
-            const title = entry.stay_at_location ? `${label} â€¢ Remain Onsite` : label;
+            const title = entry.stay_at_location ? `${label} • Remain Onsite` : label;
             if (type === 'personnel') {
                 const style = roleStyle(entry.role);
                 bars.push(`<div class="timeline-bar${entry.stay_at_location ? ' timeline-bar-stay' : ''}" data-label="${label}" style="left:${left}%;width:${width}%;background:${style.bg};border-color:${style.border};" title="${title}">${label}${stayIcon}</div>`);
@@ -1031,25 +1042,19 @@ function renderRoleLegend() {
     `;
 }
 
-function buildUnavailableWindows(availability, dayStart, dayEnd) {
-    if (!availability.length) {
-        return [{ start: dayStart, end: dayEnd }];
-    }
-    const windows = availability
+function buildAvailableWindows(availability, dayStart, dayEnd) {
+    if (!availability.length) return [];
+    return availability
         .map(a => ({
             start: a.start.getHours() * 60 + a.start.getMinutes(),
             end: a.end.getHours() * 60 + a.end.getMinutes()
         }))
-        .sort((a, b) => a.start - b.start);
-
-    const result = [];
-    let cursor = dayStart;
-    windows.forEach(w => {
-        if (w.start > cursor) result.push({ start: cursor, end: w.start });
-        cursor = Math.max(cursor, w.end);
-    });
-    if (cursor < dayEnd) result.push({ start: cursor, end: dayEnd });
-    return result;
+        .filter(w => w.end > w.start)
+        .map(w => ({
+            start: Math.max(dayStart, w.start),
+            end: Math.min(dayEnd, w.end)
+        }))
+        .filter(w => w.end > w.start);
 }
 
 // ==================== ADMIN PANEL ====================
@@ -1059,14 +1064,16 @@ function renderAdminPanel() {
     const accessRoles = ['user', 'staff', 'admin'];
     const signedIn = appState.roster.filter(r => !r.signed_out_at);
     const eventLabel = appState.selectedEvent ? appState.selectedEvent.title : 'Select an event';
-    const activeTab = appState.adminTab || 'roles';
+    let activeTab = appState.adminTab || 'roles';
+    if (activeTab === 'stations') activeTab = 'roles';
 
     const tabs = [
         { id: 'roles', label: 'Roles' },
         { id: 'user', label: 'User Access' },
         { id: 'signed', label: 'Signed In' },
-        { id: 'stations', label: 'Stations' },
         { id: 'uploads', label: 'Upload Data' },
+        { id: 'billeting', label: 'Billeting' },
+        { id: 'orgchart', label: 'Org Chart' },
     ];
 
     const tabsHtml = `
@@ -1094,24 +1101,37 @@ function renderAdminPanel() {
                 ${roles.map(role => `
                     <div class="tag admin-role-tag">
                         <span>${role}</span>
-                        <button class="tag-remove" onclick="deleteAdminRole('${role.replace(/'/g, "\\'")}')">Ã—</button>
+                        <button class="tag-remove" title="Remove role" aria-label="Remove role" onclick="deleteAdminRole('${role.replace(/'/g, "\\'")}')">&times;</button>
                     </div>
                 `).join('')}
             </div>
         </div>
     `;
 
+    const usersList = (appState.users || []).slice().sort((a, b) => String(a.cap_id || '').localeCompare(String(b.cap_id || '')));
+    const usersListHtml = usersList.length ? usersList.map(u => `
+        <div class="resource-item">
+            <div class="flex-between" style="align-items:center; gap: 12px;">
+                <div>
+                    <div class="resource-name">${u.name || 'Unknown'} (CAP ${u.cap_id || 'N/A'})</div>
+                    <div class="resource-details">Access: ${u.role || 'user'}</div>
+                </div>
+                <div class="flex gap-2" style="align-items:center;">
+                    <div class="resource-details">${u.updated_at ? new Date(u.updated_at).toLocaleString() : ''}</div>
+                    <button class="btn btn-outline btn-small" onclick="removeUserAccess('${String(u.cap_id).replace(/'/g, "\\'")}')">Remove</button>
+                </div>
+            </div>
+        </div>
+    `).join('') : '<div class="empty-state-text text-center">No users found.</div>';
+
     const userAccessSection = `
         <div class="card" style="max-width: 760px; width: 100%; margin-bottom: 16px;">
-            <div class="form-row">
-                <label class="form-label">User Access</label>
-                <div class="tag-input-row">
-                    <input type="text" class="form-input" id="adminUserCapId" placeholder="CAP ID" style="max-width: 180px;">
-                    <select class="form-select" id="adminUserRole" style="max-width: 160px;">
-                        ${accessRoles.map(r => `<option value="${r}">${r.charAt(0).toUpperCase() + r.slice(1)}</option>`).join('')}
-                    </select>
-                    <button class="btn btn-blue btn-small" onclick="adminSetUserRole()">Set Role</button>
-                </div>
+            <div class="flex-between" style="align-items:center; gap: 12px;">
+                <div class="form-label">User Access</div>
+                <button class="btn btn-blue btn-small" onclick="openAddUserModal()">Add User</button>
+            </div>
+            <div class="resource-list" style="margin-top: 12px;">
+                ${usersListHtml}
             </div>
         </div>
     `;
@@ -1141,20 +1161,6 @@ function renderAdminPanel() {
                         </div>
                     `;
                 }).join('') : '<div class="empty-state-text text-center">No one currently signed in.</div>'}
-            </div>
-        </div>
-    `;
-
-    const stationsSection = `
-        <div class="card" style="margin-top:16px;">
-            <div class="flex-between mb-2">
-                <h3 class="page-subtitle">INPROCESSING STATIONS</h3>
-                <div>
-                    <button class="btn btn-blue btn-small" onclick="openStationModal('')">Add Station</button>
-                </div>
-            </div>
-            <div id="adminStationsList" class="resource-list">
-                Loading stations...
             </div>
         </div>
     `;
@@ -1217,11 +1223,14 @@ function renderAdminPanel() {
         case 'signed':
             body = signedInSection;
             break;
-        case 'stations':
-            body = stationsSection;
-            break;
         case 'uploads':
             body = uploadsSection;
+            break;
+        case 'billeting':
+            body = renderBilletingAdmin();
+            break;
+        case 'orgchart':
+            body = renderOrgChartAdmin();
             break;
         default:
             body = rolesSection;
@@ -1240,6 +1249,412 @@ function renderAdminPanel() {
     `;
 }
 
+function renderAddUserModal() {
+    return createModal('ADD USER', `
+        <div class="form-row">
+            <label class="form-label">Name</label>
+            <input type="text" class="form-input" id="newUserName" placeholder="Full name" required>
+        </div>
+        <div class="form-row">
+            <label class="form-label">CAP ID</label>
+            <input type="text" class="form-input" id="newUserCapId" placeholder="CAP ID" maxlength="10" required>
+        </div>
+        <div class="form-row">
+            <label class="form-label">PIN (8 digits)</label>
+            <input type="password" class="form-input" id="newUserPin" placeholder="8-digit PIN" maxlength="8" minlength="8" inputmode="numeric" pattern="[0-9]{8}" required>
+        </div>
+        <div class="form-row">
+            <label class="form-label">Confirm PIN</label>
+            <input type="password" class="form-input" id="newUserPinConfirm" placeholder="Confirm PIN" maxlength="8" minlength="8" inputmode="numeric" pattern="[0-9]{8}" required>
+        </div>
+        <div class="form-row">
+            <label class="form-label">Role</label>
+            <select class="form-select" id="newUserRole" required>
+                <option value="admin">Admin</option>
+                <option value="user">User</option>
+            </select>
+        </div>
+        <div class="resource-details" id="newUserError" style="color:#f87171;margin-top:8px;"></div>
+    `, `
+        <button class="btn btn-blue" onclick="submitAddUser()">Create User</button>
+        <button class="btn btn-outline" onclick="closeModal()">Cancel</button>
+    `);
+}
+
+// ============ Billeting Admin ============
+function renderBilletingAdmin() {
+    const event = appState.selectedEvent;
+    if (!event) {
+        return `
+            <div class="card">
+                <div class="resource-details">Select an event to manage billeting.</div>
+            </div>
+        `;
+    }
+    const buildings = appState.billetingBuildings || [];
+    const floorsByBuilding = appState.billetingFloors || {};
+    const roomsByFloor = appState.billetingRooms || {};
+
+    const buildingList = buildings.length ? buildings.map(b => {
+        const floors = floorsByBuilding[b.id] || [];
+        const totalRooms = floors.reduce((sum, f) => sum + ((roomsByFloor[f.id] || []).length), 0);
+        const buildingExpanded = isBilletingBuildingExpanded(b.id);
+        return `
+            <div class="resource-item">
+                <div class="flex-between" style="align-items:center; gap:12px;">
+                    <div>
+                        <div class="resource-name">${b.name} (${(b.gender_restriction || 'mixed').toUpperCase()})</div>
+                        <div class="resource-details">${floors.length} floor${floors.length === 1 ? '' : 's'}, ${totalRooms} room${totalRooms === 1 ? '' : 's'}</div>
+                    </div>
+                    <div class="flex gap-2" style="align-items:center;">
+                        <button class="btn btn-outline btn-small" onclick="toggleBilletingBuilding('${b.id}')">${buildingExpanded ? 'Collapse' : 'Expand'}</button>
+                        <button class="btn btn-outline btn-small" onclick="openAddFloorModal('${b.id}', '${b.name.replace(/'/g, "\\'")}')">+ Add Floor</button>
+                        <button class="btn btn-outline btn-small" onclick="editBuildingModal('${b.id}')">Edit</button>
+                        <button class="btn btn-ghost btn-small" onclick="confirmDeleteBuilding('${b.id}')">Delete</button>
+                    </div>
+                </div>
+                ${buildingExpanded ? renderBilletingFloorsList(b, floors, roomsByFloor) : ''}
+            </div>
+        `;
+    }).join('') : '<div class="empty-state-text text-center">No buildings yet.</div>';
+
+    return `
+        <div class="flex-between mb-4">
+            <h3 class="page-subtitle">Billeting Layout</h3>
+            <button class="btn btn-blue btn-small" onclick="openAddBuildingModal()">+ Add Building</button>
+        </div>
+        <div class="resource-list">
+            ${buildingList}
+        </div>
+    `;
+}
+
+function renderBilletingFloorsList(building, floors, roomsByFloor) {
+    if (!floors.length) return '';
+    const floorsHtml = floors.map(f => {
+        const rooms = roomsByFloor[f.id] || [];
+        const floorExpanded = isBilletingFloorExpanded(f.id);
+        return `
+            <div class="resource-item" style="margin-top:10px;">
+                <div class="flex-between" style="align-items:center; gap:12px;">
+                    <div>
+                        <div class="resource-name">Floor ${f.floor_number}</div>
+                        <div class="resource-details">${rooms.length} room${rooms.length === 1 ? '' : 's'}</div>
+                    </div>
+                    <div class="flex gap-2">
+                        <button class="btn btn-outline btn-small" onclick="toggleBilletingFloor('${f.id}')">${floorExpanded ? 'Collapse' : 'Expand'}</button>
+                        <button class="btn btn-outline btn-small" onclick="openAddRoomsModal('${f.id}', '${f.floor_number.replace(/'/g, "\\'")}', '${building.id}', '${building.name.replace(/'/g, "\\'")}')">+ Add Rooms</button>
+                    </div>
+                </div>
+                ${floorExpanded ? renderBilletingRoomsList(building, f, rooms) : ''}
+            </div>
+        `;
+    }).join('');
+    return `<div class="resource-list" style="margin-top:10px;">${floorsHtml}</div>`;
+}
+
+function renderBilletingRoomsList(building, floor, rooms) {
+    if (!rooms.length) return '<div class="resource-details" style="margin-top:6px;">No rooms on this floor.</div>';
+    const roomsHtml = rooms.map(r => {
+        return `
+            <div class="resource-item" style="margin-top:8px;">
+                <div class="flex-between" style="align-items:center; gap:12px;">
+                    <div>
+                        <div class="resource-name">Room ${r.room_number} (${r.bunk_capacity} bunks)</div>
+                        <div class="resource-details">Layout only</div>
+                    </div>
+                    <div class="flex gap-2">
+                        <button class="btn btn-ghost btn-small" onclick="confirmDeleteRoom('${r.id}')">Delete</button>
+                    </div>
+                </div>
+            </div>
+        `;
+    }).join('');
+    return `<div class="resource-list" style="margin-top:8px;">${roomsHtml}</div>`;
+}
+
+function renderBilletingPlanning() {
+    const event = appState.selectedEvent;
+    if (!event) {
+        return `
+            <div class="card">
+                <div class="resource-details">Select an event to plan billeting assignments.</div>
+            </div>
+        `;
+    }
+    const buildings = appState.billetingBuildings || [];
+    const floorsByBuilding = appState.billetingFloors || {};
+    const roomsByFloor = appState.billetingRooms || {};
+
+    const buildingList = buildings.length ? buildings.map(b => {
+        const floors = floorsByBuilding[b.id] || [];
+        const totalRooms = floors.reduce((sum, f) => sum + ((roomsByFloor[f.id] || []).length), 0);
+        const totalAssigned = floors.reduce((sum, f) => {
+            const rooms = roomsByFloor[f.id] || [];
+            return sum + rooms.reduce((roomSum, r) => roomSum + ((appState.billetingAssignmentsByRoom?.[r.id] || []).length), 0);
+        }, 0);
+        const buildingExpanded = isBilletingBuildingExpanded(b.id);
+        return `
+            <div class="resource-item">
+                <div class="flex-between" style="align-items:center; gap:12px;">
+                    <div>
+                        <div class="resource-name">${b.name} (${(b.gender_restriction || 'mixed').toUpperCase()})</div>
+                        <div class="resource-details">${floors.length} floor${floors.length === 1 ? '' : 's'}, ${totalRooms} room${totalRooms === 1 ? '' : 's'}, ${totalAssigned} assigned</div>
+                    </div>
+                    <div class="flex gap-2">
+                        <button class="btn btn-outline btn-small" onclick="toggleBilletingBuilding('${b.id}')">${buildingExpanded ? 'Collapse' : 'Expand'}</button>
+                    </div>
+                </div>
+                ${buildingExpanded ? renderBilletingPlanningFloorsList(b, floors, roomsByFloor) : ''}
+            </div>
+        `;
+    }).join('') : '<div class="empty-state-text text-center">No billeting layout is defined yet.</div>';
+
+    return `
+        <div class="page-header">
+            <div>
+                <h2 class="page-title">BILLETING PLANNING</h2>
+                <p class="page-subtitle">${event.title}</p>
+            </div>
+        </div>
+        <div class="resource-list">
+            ${buildingList}
+        </div>
+    `;
+}
+
+function renderBilletingPlanningFloorsList(building, floors, roomsByFloor) {
+    if (!floors.length) return '';
+    const floorsHtml = floors.map(f => {
+        const rooms = roomsByFloor[f.id] || [];
+        const floorExpanded = isBilletingFloorExpanded(f.id);
+        return `
+            <div class="resource-item" style="margin-top:10px;">
+                <div class="flex-between" style="align-items:center; gap:12px;">
+                    <div>
+                        <div class="resource-name">Floor ${f.floor_number}</div>
+                        <div class="resource-details">${rooms.length} room${rooms.length === 1 ? '' : 's'}</div>
+                    </div>
+                    <div class="flex gap-2">
+                        <button class="btn btn-outline btn-small" onclick="toggleBilletingFloor('${f.id}')">${floorExpanded ? 'Collapse' : 'Expand'}</button>
+                    </div>
+                </div>
+                ${floorExpanded ? renderBilletingPlanningRoomsList(building, f, rooms) : ''}
+            </div>
+        `;
+    }).join('');
+    return `<div class="resource-list" style="margin-top:10px;">${floorsHtml}</div>`;
+}
+
+function renderBilletingPlanningRoomsList(building, floor, rooms) {
+    if (!rooms.length) return '<div class="resource-details" style="margin-top:6px;">No rooms on this floor.</div>';
+    const roomsHtml = rooms.map(r => {
+        const assignments = (appState.billetingAssignmentsByRoom?.[r.id] || []);
+        const assignedCount = assignments.length;
+        const capacity = Number(r.bunk_capacity || 0);
+        const normalize = (value) => {
+            if (typeof normalizeCapId === 'function') return normalizeCapId(value);
+            return String(value || '').trim();
+        };
+        const occupants = assignments
+            .map(a => {
+                const cap = normalize(a.cap_id);
+                const rosterEntry = (appState.roster || []).find(x => normalize(x.cap_id) === cap);
+                const name = (rosterEntry?.full_name || rosterEntry?.name || '').trim();
+                const rank = (rosterEntry?.rank || '').trim();
+                if (rank && name) return `${rank} ${name} (CAP ${cap || a.cap_id || ''})`;
+                if (name) return `${name} (CAP ${cap || a.cap_id || ''})`;
+                return `CAP ${cap || a.cap_id || ''}`.trim();
+            })
+            .filter(Boolean);
+        const occupantsHtml = occupants.length
+            ? `<div style="display:flex; flex-wrap:wrap; gap:6px; margin-top:4px;">${occupants.map(label => `<span class="resource-details" style="font-size:12px; line-height:1.2; padding:2px 8px; border:1px solid rgba(120,170,240,0.35); border-radius:999px; background:rgba(120,170,240,0.08);">${label}</span>`).join('')}</div>`
+            : `<div class="resource-details" style="font-size:12px; line-height:1.35; margin-top:2px;">No occupants yet</div>`;
+        return `
+            <div class="resource-item" style="margin-top:8px;">
+                <div class="flex-between" style="align-items:center; gap:12px;">
+                    <div>
+                        <div class="resource-name">Room ${r.room_number} (${capacity} bunks)</div>
+                        <div class="resource-details">${assignedCount}/${capacity} assigned</div>
+                        ${occupantsHtml}
+                    </div>
+                    <div class="flex gap-2">
+                        <button class="btn btn-outline btn-small" onclick="openAssignBunksModal('${building.id}', '${floor.id}', '${r.id}', '${building.name.replace(/'/g, "\\'")}', '${floor.floor_number.replace(/'/g, "\\'")}', '${r.room_number.replace(/'/g, "\\'")}')">View/Assign</button>
+                    </div>
+                </div>
+            </div>
+        `;
+    }).join('');
+    return `<div class="resource-list" style="margin-top:8px;">${roomsHtml}</div>`;
+}
+
+function renderOrgChartAdmin() {
+    return renderOrgChartView(true);
+}
+
+function renderOrgChartHTML(positions) {
+    const rows = Array.isArray(positions) ? positions : [];
+
+    const esc = (v) =>
+        String(v ?? '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+
+    const keyOf = (p) => String(p?.cap_id ?? '').trim();
+    const parentKeyOf = (p) => (p?.reports_to_cap_id == null ? '' : String(p.reports_to_cap_id).trim());
+
+    const labelOf = (p) => {
+        const title = String(p?.position_title ?? '').trim();
+        const name = String(p?.person_name ?? '').trim();
+        if (title && name) return `${title} - ${name}`;
+        return title || name || 'Unassigned';
+    };
+    const detailsOf = (p) => {
+        const callsign = String(p?.callsign ?? '').trim();
+        const phone = String(p?.phone ?? '').trim();
+        const email = String(p?.email ?? '').trim();
+        const parts = [];
+        if (callsign) parts.push(`Callsign: ${callsign}`);
+        if (phone) parts.push(`Phone: ${phone}`);
+        if (email) parts.push(`Email: ${email}`);
+        return parts;
+    };
+    const cardHtml = (p) => {
+        const details = detailsOf(p);
+        return `
+            <div class="org-card-title">${esc(labelOf(p))}</div>
+            ${details.length ? `<div class="org-card-details">${details.map(d => `<div>${esc(d)}</div>`).join('')}</div>` : ''}
+        `;
+    };
+
+    const byParent = new Map();
+    const byId = new Map();
+    for (const row of rows) {
+        const id = keyOf(row);
+        if (!id) continue;
+        byId.set(id, row);
+        const parent = parentKeyOf(row);
+        if (!byParent.has(parent)) byParent.set(parent, []);
+        byParent.get(parent).push(row);
+    }
+
+    const roots = rows.filter((row) => {
+        const id = keyOf(row);
+        if (!id) return false;
+        const parent = parentKeyOf(row);
+        return !parent || !byId.has(parent);
+    });
+
+    function renderNode(node, isRoot = false) {
+        const id = keyOf(node);
+        const children = byParent.get(id) || [];
+        const hasChildren = children.length > 0;
+
+        if (!isRoot && !hasChildren) {
+            return `<div class="org-card">${cardHtml(node)}</div>`;
+        }
+
+        let html = `<div class="org-node">`;
+        html += `<div class="org-card">${cardHtml(node)}</div>`;
+
+        if (hasChildren) {
+            html += `<div class="org-line-down"></div>`;
+            html += `<div class="org-children">`;
+            html += `<div class="org-children-row">`;
+
+            for (const child of children) {
+                html += `<div class="org-child">`;
+                html += `<div class="org-line-stub"></div>`;
+                html += renderNode(child, false);
+                html += `</div>`;
+            }
+
+            html += `</div>`;
+            html += `</div>`;
+        }
+
+        html += `</div>`;
+        return html;
+    }
+
+    return `
+        <div class="org-chart-container">
+            ${roots.map((root) => renderNode(root, true)).join('')}
+        </div>
+    `;
+}
+
+function renderOrgChartView(editable = false) {
+    const event = appState.selectedEvent;
+    if (!event) {
+        return `
+            <div class="card">
+                <div class="resource-details">Select an event to view the org chart.</div>
+            </div>
+        `;
+    }
+
+    const activeType = String(appState.orgChartActiveType || 'senior').toLowerCase() === 'cadet' ? 'cadet' : 'senior';
+
+    return `
+        <div class="flex-between mb-4">
+            <h3 class="page-subtitle">Org Chart</h3>
+            ${editable ? `<button class="btn btn-blue btn-small" onclick="openAddOrgChartPositionModal()">+ Add Position</button>` : ''}
+        </div>
+        <div class="flex gap-2" style="margin-bottom:10px;">
+            <button class="btn ${activeType === 'senior' ? 'btn-blue' : 'btn-outline'} btn-small" onclick="setOrgChartType('senior')">Senior Member Chart</button>
+            <button class="btn ${activeType === 'cadet' ? 'btn-blue' : 'btn-outline'} btn-small" onclick="setOrgChartType('cadet')">Cadet Chart</button>
+        </div>
+        <div class="card org-chart-shell">
+            <div id="orgChartMount"></div>
+        </div>
+    `;
+}
+
+function mountOrgChartHTML() {
+    const target = document.getElementById('orgChartMount');
+    if (!target) return;
+    const roster = Array.isArray(appState.roster) ? appState.roster : [];
+    const positions = Array.isArray(appState.orgChartPositions) ? appState.orgChartPositions : [];
+    const normalize = (v) => String(v || '').trim();
+
+    const rosterByCap = new Map();
+    for (const r of roster) {
+        const cap = normalize(r?.cap_id);
+        if (!cap || rosterByCap.has(cap)) continue;
+        rosterByCap.set(cap, (r?.full_name || r?.name || '').trim());
+    }
+
+    const activeType = String(appState.orgChartActiveType || 'senior').toLowerCase() === 'cadet' ? 'cadet' : 'senior';
+    let filtered = positions.filter(p => String(p.chart_type || 'senior').toLowerCase() === activeType);
+    // Backward compatibility: if chart_type is missing in DB rows, keep showing senior chart data.
+    if (!filtered.length && activeType === 'senior') {
+        filtered = positions.filter(p => !p.chart_type);
+    }
+    // If current type is empty but we do have positions, automatically fall back to senior.
+    if (!filtered.length && positions.length) {
+        const seniorFallback = positions.filter(p => String(p.chart_type || 'senior').toLowerCase() === 'senior' || !p.chart_type);
+        if (seniorFallback.length) {
+            appState.orgChartActiveType = 'senior';
+            filtered = seniorFallback;
+        }
+    }
+
+    const normalizedPositions = filtered.map((p) => {
+        const cap = normalize(p.cap_id);
+        const rosterName = rosterByCap.get(cap) || '';
+        const person_name = String(p?.person_name || '').trim() || rosterName;
+        return { ...p, person_name };
+    });
+
+    target.innerHTML = normalizedPositions.length
+        ? renderOrgChartHTML(normalizedPositions)
+        : `<div class="empty-state-text text-center">No ${activeType === 'cadet' ? 'Cadet' : 'Senior Member'} org chart positions yet.</div>`;
+}
+
 function renderNotAuthorized() {
     return `
         <div class="empty-state">
@@ -1249,7 +1664,7 @@ function renderNotAuthorized() {
 }
 
 function renderReports() {
-    const reportItems = ['Inprocessing', 'Outprocessing', 'Assets', 'Personnel', 'Roster', 'Locations', 'Log'];
+    const reportItems = ['Inprocessing', 'Outprocessing', 'Assets & Vehicles', 'Personnel', 'Roster', 'Locations', 'Log'];
     const activeReport = appState.reportView || '';
     return `
         <div class="page-header">

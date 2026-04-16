@@ -1,6 +1,21 @@
 // Main Application Logic
 
 const BUILD_ID = '20260205-activities-toggle';
+const VIEW_STORAGE_KEY = 'cap-event-current-view';
+
+// Ensure loading helpers exist even if components script didn't load yet
+if (typeof showLoading !== 'function') {
+    window.showLoading = () => {
+        const el = document.getElementById('loadingIndicator');
+        if (el) el.style.display = 'block';
+    };
+}
+if (typeof hideLoading !== 'function') {
+    window.hideLoading = () => {
+        const el = document.getElementById('loadingIndicator');
+        if (el) el.style.display = 'none';
+    };
+}
 
 let appState = {
     currentView: 'dashboard',
@@ -35,8 +50,29 @@ let appState = {
     isOnline: navigator.onLine,
     pendingCount: 0,
     syncingPending: false,
-    offlineCached: false
+    offlineCached: false,
+    billetingBuildings: [],
+    billetingFloors: {}, // buildingId -> floors[]
+    billetingRooms: {},  // floorId -> rooms[]
+    billetingBunks: {},  // roomId -> bunks[]
+    billetingAssignmentsByRoom: {},
+    billetingByCap: {},
+    billetingAssignCandidate: null,
+    billetingExpandedBuildings: {}, // buildingId -> bool
+    billetingExpandedFloors: {},    // floorId -> bool
+    orgChartPositions: [],
+    orgChartCollapsedCapIds: {},
+    orgChartActiveType: 'senior'
 };
+
+function persistCurrentView() {
+    localStorage.setItem(VIEW_STORAGE_KEY, appState.currentView || 'dashboard');
+}
+
+function restoreCurrentView() {
+    const storedView = localStorage.getItem(VIEW_STORAGE_KEY);
+    if (storedView) appState.currentView = storedView;
+}
 
 function normalizeCapId(value) {
     const raw = String(value || '').trim();
@@ -59,6 +95,39 @@ function updateContextUI() {
     document.querySelectorAll('.nav-item[data-privileged="true"]').forEach(item => {
         item.style.display = isPrivileged() ? 'flex' : 'none';
     });
+    ensureOrgChartNavVisible();
+}
+
+function ensureOrgChartNavVisible() {
+    const nav = document.querySelector('.sidebar-nav');
+    if (!nav) return;
+    let item = nav.querySelector('.nav-item[data-view="orgchart"]');
+    if (!item) {
+        item = document.createElement('button');
+        item.className = 'nav-item';
+        item.dataset.view = 'orgchart';
+        item.innerHTML = `
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="5" r="2"></circle>
+                <circle cx="6" cy="12" r="2"></circle>
+                <circle cx="18" cy="12" r="2"></circle>
+                <circle cx="12" cy="19" r="2"></circle>
+                <line x1="12" y1="7" x2="6" y2="10"></line>
+                <line x1="12" y1="7" x2="18" y2="10"></line>
+                <line x1="6" y1="14" x2="12" y2="17"></line>
+                <line x1="18" y1="14" x2="12" y2="17"></line>
+            </svg>
+            Org Chart
+        `;
+        const billeting = nav.querySelector('.nav-item[data-view="billeting"]');
+        if (billeting && billeting.nextSibling) {
+            nav.insertBefore(item, billeting.nextSibling);
+        } else {
+            nav.appendChild(item);
+        }
+        item.addEventListener('click', () => switchView('orgchart'));
+    }
+    item.style.display = 'flex';
 }
 
 function toggleEventsWithNeeds() {
@@ -88,7 +157,8 @@ function renderSandboxBanner() {
 // ==================== INITIALIZATION ====================
 
 document.addEventListener('DOMContentLoaded', async () => {
-    console.log('🚀 CAP Event System starting...');
+    try {
+    console.log('CAP Event System starting...');
     appState.sandboxMode = localStorage.getItem('cap-event-sandbox-mode') === 'true';
     setupConnectionMonitoring();
     
@@ -100,25 +170,43 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Setup login form
     document.getElementById('loginForm').addEventListener('submit', handleLogin);
 
-    // Auto-login if saved
+    // Auto-login if saved (requires PIN)
     const savedCapId = localStorage.getItem('cap-event-current-cap-id');
-    if (savedCapId) {
+    const savedPin = localStorage.getItem('cap-event-current-pin');
+    if (savedCapId && savedPin) {
         try {
             showLoading();
-            const user = await loginUser(savedCapId);
+            const user = await loginUser(savedCapId, savedPin);
             document.getElementById('currentUserId').textContent = user.cap_id;
-            document.getElementById('userRole').textContent = user.role.toUpperCase();
+            document.getElementById('userRole').textContent = user.role?.toUpperCase?.() || 'ADMIN';
             document.getElementById('loginScreen').style.display = 'none';
             document.getElementById('appScreen').style.display = 'flex';
-            await loadAllData();
+            try {
+                await loadAllData();
+            } catch (err) {
+                console.error('Auto-login data load failed, continuing offline:', err);
+                appState.events = [];
+                appState.activities = [];
+                appState.assets = [];
+                appState.personnel = [];
+                appState.locations = [];
+                appState.roster = [];
+            }
+            restoreCurrentView();
             renderCurrentView();
             updateContextUI();
         } catch (error) {
             console.error('Auto-login failed:', error);
             localStorage.removeItem('cap-event-current-cap-id');
+            localStorage.removeItem('cap-event-current-pin');
         } finally {
             hideLoading();
         }
+    } else {
+        hideLoading();
+    }
+    } catch (err) {
+        console.error('Startup error', err);
     }
 });
 
@@ -127,31 +215,47 @@ document.addEventListener('DOMContentLoaded', async () => {
 async function handleLogin(e) {
     e.preventDefault();
     const capId = document.getElementById('capIdInput').value.trim();
+    const pin = document.getElementById('capPinInput').value.trim();
     
-    if (!capId) {
-        alert('Please enter your CAP ID');
+    if (!capId || !pin) {
+        alert('Please enter your CAP ID and PIN');
+        return;
+    }
+    if (!/^\d{8}$/.test(pin)) {
+        alert('PIN must be exactly 8 digits');
         return;
     }
 
     showLoading();
     
     try {
-        const user = await loginUser(capId);
+        const user = await loginUser(capId, pin);
         // Start each session with sandbox off
         appState.sandboxMode = false;
         localStorage.setItem('cap-event-sandbox-mode', 'false');
         localStorage.setItem('cap-event-current-cap-id', capId);
+        localStorage.setItem('cap-event-current-pin', pin);
         
         // Update UI
         document.getElementById('currentUserId').textContent = user.cap_id;
-        document.getElementById('userRole').textContent = user.role.toUpperCase();
+        document.getElementById('userRole').textContent = user.role?.toUpperCase?.() || 'ADMIN';
         
         // Show app screen
         document.getElementById('loginScreen').style.display = 'none';
         document.getElementById('appScreen').style.display = 'flex';
         
         // Load initial data
-        await loadAllData();
+        try {
+            await loadAllData();
+        } catch (err) {
+            console.error('Data load failed, continuing offline:', err);
+            appState.events = [];
+            appState.activities = [];
+            appState.assets = [];
+            appState.personnel = [];
+            appState.locations = [];
+            appState.roster = [];
+        }
         renderCurrentView();
         updateContextUI();
         
@@ -164,9 +268,30 @@ async function handleLogin(e) {
     }
 }
 
+function isBilletingBuildingExpanded(buildingId) {
+    return !!(appState.billetingExpandedBuildings && appState.billetingExpandedBuildings[buildingId]);
+}
+
+function isBilletingFloorExpanded(floorId) {
+    return !!(appState.billetingExpandedFloors && appState.billetingExpandedFloors[floorId]);
+}
+
+function toggleBilletingBuilding(buildingId) {
+    appState.billetingExpandedBuildings = appState.billetingExpandedBuildings || {};
+    appState.billetingExpandedBuildings[buildingId] = !appState.billetingExpandedBuildings[buildingId];
+    renderCurrentView();
+}
+
+function toggleBilletingFloor(floorId) {
+    appState.billetingExpandedFloors = appState.billetingExpandedFloors || {};
+    appState.billetingExpandedFloors[floorId] = !appState.billetingExpandedFloors[floorId];
+    renderCurrentView();
+}
+
 function handleLogout() {
     logoutUser();
     localStorage.removeItem('cap-event-current-cap-id');
+    localStorage.removeItem(VIEW_STORAGE_KEY);
     document.getElementById('loginScreen').style.display = 'flex';
     document.getElementById('appScreen').style.display = 'none';
     document.getElementById('capIdInput').value = '';
@@ -183,7 +308,19 @@ function handleLogout() {
         adminTab: 'roles',
         inprocessMissingCapId: '',
         manualEntryOpen: false,
-        approvalWarning: null
+        approvalWarning: null,
+        billetingBuildings: [],
+        billetingFloors: {},
+        billetingRooms: {},
+        billetingBunks: {},
+        billetingAssignmentsByRoom: {},
+        billetingByCap: {},
+        billetingAssignCandidate: null,
+        billetingExpandedBuildings: {},
+        billetingExpandedFloors: {},
+        orgChartPositions: [],
+        orgChartCollapsedCapIds: {},
+        orgChartActiveType: 'senior'
     };
     updateContextUI();
 }
@@ -197,6 +334,38 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }, 100);
 });
+
+// Forensic UI audit: capture button clicks with context.
+document.addEventListener('click', (event) => {
+    try {
+        const target = event.target && event.target.closest ? event.target.closest('button, .nav-item') : null;
+        if (!target) return;
+        const actor = typeof getCurrentUser === 'function' ? getCurrentUser() : null;
+        if (!actor || !actor.cap_id) return;
+        const label = (target.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+        if (!label) return;
+        const view = appState.currentView || '';
+        const eventId = appState.selectedEvent?.id || '';
+        addLogEntry({
+            type: 'audit',
+            action: 'ui-click',
+            entity_type: 'ui',
+            entity_id: target.id || target.dataset?.view || '',
+            entity_name: label,
+            details: {
+                view,
+                event_id: eventId,
+                class: target.className || ''
+            },
+            actor_cap_id: actor.cap_id,
+            actor_name: actor.name || '',
+            actor_role: actor.role || '',
+            cap_id: actor.cap_id,
+            name: actor.name || '',
+            message: `UI click: ${label}`
+        }).catch(() => {});
+    } catch {}
+}, true);
 
 // Setup mobile menu
 document.addEventListener('DOMContentLoaded', () => {
@@ -226,7 +395,7 @@ document.addEventListener('DOMContentLoaded', () => {
 async function loadAllData() {
     showLoading();
     try {
-        const [events, activities, assets, personnel, locations, roster, roles, users, logs, supportTickets] = await Promise.all([
+        const results = await Promise.allSettled([
             getEvents(),
             getActivities(),
             getAssets(),
@@ -238,6 +407,22 @@ async function loadAllData() {
             getLogs(),
             getSupportTickets()
         ]);
+        const pick = (idx, fallback, label) => {
+            const r = results[idx];
+            if (r && r.status === 'fulfilled') return r.value;
+            console.warn(`loadAllData: ${label} failed`, r && r.reason ? r.reason : r);
+            return fallback;
+        };
+        const events = pick(0, [], 'events');
+        const activities = pick(1, [], 'activities');
+        const assets = pick(2, [], 'assets');
+        const personnel = pick(3, [], 'personnel');
+        const locations = pick(4, [], 'locations');
+        const roster = pick(5, [], 'roster');
+        const roles = pick(6, [], 'roles');
+        const users = pick(7, [], 'users');
+        const logs = pick(8, [], 'logs');
+        const supportTickets = pick(9, [], 'supportTickets');
         
         // Ensure sandbox filter is applied client-side even if backend returns mixed data.
         const sandboxFlag = localStorage.getItem('cap-event-sandbox-mode') === 'true';
@@ -266,6 +451,25 @@ async function loadAllData() {
             }
         }
 
+        // Ensure roster and billeting are aligned to the selected event.
+        if (appState.selectedEvent && appState.selectedEvent.id) {
+            try {
+                appState.roster = filterSandbox(await getRoster(appState.selectedEvent.id));
+            } catch (err) {
+                console.warn('loadAllData: selected-event roster refresh failed', err);
+            }
+        }
+        try {
+            await loadBilletingDataForSelectedEvent();
+        } catch (err) {
+            console.warn('loadAllData: billeting refresh failed', err);
+        }
+        try {
+            await loadOrgChartDataForSelectedEvent();
+        } catch (err) {
+            console.warn('loadAllData: org chart refresh failed', err);
+        }
+
         if (appState.selectedEvent && appState.isOnline && window.offlineStore) {
             try {
                 const accommodations = await (typeof getEventAccommodations === 'function' ? getEventAccommodations(appState.selectedEvent.id) : []);
@@ -283,14 +487,17 @@ async function loadAllData() {
         }
 
         if (isPrivileged()) {
-            await syncAllDriversForActivities();
-            await autoPromoteReady();
+            try {
+                await syncAllDriversForActivities();
+                await autoPromoteReady();
+            } catch (err) {
+                console.warn('loadAllData: post-load privileged sync failed', err);
+            }
         }
         
         console.log('✅ Data loaded:', { events: events.length, activities: activities.length, assets: assets.length, personnel: personnel.length });
     } catch (error) {
         console.error('Failed to load data:', error);
-        alert('Failed to load data. Please refresh the page.');
     } finally {
         hideLoading();
     }
@@ -301,15 +508,12 @@ async function syncAllDriversForActivities() {
     for (const activity of appState.activities) {
         const assetAssignments = normalizeAssignmentEntries(activity.assigned_assets || [], 'assets');
         const currentPersonnel = normalizeAssignmentEntries(activity.assigned_personnel || [], 'personnel');
-        const nonDrivers = currentPersonnel
-            .filter(entry => !(entry.auto_driver || isVehicleOperatorRole(entry.role)));
-
-        const drivers = [];
+        const updatedPersonnel = [...currentPersonnel]; // preserve all existing assignments
         assetAssignments.forEach(assign => {
             if (!assign.assignment_start_time || !assign.assignment_end_time || !activity.activity_date) return;
             const driver = getAssetDriverForWindow(assign.id, activity.activity_date, assign.assignment_start_time, assign.assignment_end_time);
             if (driver) {
-                drivers.push({
+                const driverPayload = {
                     id: driver.id,
                     role: driver.role || 'Driver',
                     assignment_date: activity.activity_date,
@@ -317,11 +521,20 @@ async function syncAllDriversForActivities() {
                     assignment_end_time: assign.assignment_end_time,
                     auto_driver: true,
                     asset_id: String(assign.id)
-                });
+                };
+                const existingIdx = updatedPersonnel.findIndex(p =>
+                    String(p.id) === String(driverPayload.id) &&
+                    p.auto_driver === true &&
+                    String(p.asset_id || p.id) === String(driverPayload.asset_id)
+                );
+                if (existingIdx >= 0) {
+                    updatedPersonnel[existingIdx] = { ...updatedPersonnel[existingIdx], ...driverPayload };
+                } else {
+                    updatedPersonnel.push(driverPayload);
+                }
             }
         });
 
-        const updatedPersonnel = [...nonDrivers, ...drivers];
         const updatedPayload = toActivityPersonnelPayload(updatedPersonnel);
         const currentPayload = toActivityPersonnelPayload(currentPersonnel);
         const changed = JSON.stringify(currentPayload) !== JSON.stringify(updatedPayload);
@@ -355,13 +568,9 @@ function renderCurrentView() {
     let postRender = null;
     const ensureEvent = () => {
         appState.currentView = 'events';
+        persistCurrentView();
         return renderEvents(appState.events);
     };
-    if (isPrivileged() && !appState.selectedEvent) {
-        viewHtml = renderAdminHome(appState.events);
-        contentArea.innerHTML = renderSandboxBanner() + viewHtml;
-        return;
-    }
     
     switch (appState.currentView) {
         case 'dashboard':
@@ -395,11 +604,31 @@ function renderCurrentView() {
                     loadInprocessingStations(appState.selectedEvent.id);
                     focusCapInput();
                     attachCapEnterHandler();
+                    if (appState.inprocessProfile && appState.inprocessProfile.capId) {
+                        setTimeout(() => renderBilletingSummaryData(appState.inprocessProfile.capId), 80);
+                    }
                 };
             }
             break;
         case 'outprocessing':
             viewHtml = renderOutprocessing();
+            break;
+        case 'billeting':
+            if (!appState.selectedEvent) {
+                viewHtml = ensureEvent();
+            } else {
+                viewHtml = isPrivileged() ? renderBilletingPlanning() : renderNotAuthorized();
+            }
+            break;
+        case 'orgchart':
+            if (!appState.selectedEvent) {
+                viewHtml = ensureEvent();
+            } else {
+                viewHtml = renderOrgChartView(false);
+                postRender = () => {
+                    if (typeof mountOrgChartHTML === 'function') mountOrgChartHTML();
+                };
+            }
             break;
         case 'assets':
             if (appState.selectedEvent) {
@@ -443,7 +672,12 @@ function renderCurrentView() {
                 viewHtml = ensureEvent();
             } else if (isAdmin()) {
                 viewHtml = renderAdminPanel();
-                postRender = () => loadAllStations();
+                postRender = () => {
+                    loadAllStations();
+                    if (appState.adminTab === 'orgchart' && typeof mountOrgChartHTML === 'function') {
+                        mountOrgChartHTML();
+                    }
+                };
             } else {
                 viewHtml = renderNotAuthorized();
             }
@@ -468,10 +702,259 @@ function setAdminTab(tab) {
     renderCurrentView();
 }
 
+function setOrgChartType(type) {
+    const t = String(type || '').toLowerCase() === 'cadet' ? 'cadet' : 'senior';
+    appState.orgChartActiveType = t;
+    renderCurrentView();
+}
+
+function toggleOrgChartBranch(capId) {
+    const key = String(capId || '').trim();
+    if (!key) return;
+    appState.orgChartCollapsedCapIds = appState.orgChartCollapsedCapIds || {};
+    appState.orgChartCollapsedCapIds[key] = !appState.orgChartCollapsedCapIds[key];
+    renderCurrentView();
+}
+
+function openOrgChartProfile(capId) {
+    const normalized = normalizeCapId(capId);
+    if (!normalized) return;
+    switchView('inprocessing');
+    setTimeout(() => {
+        const input = document.getElementById('inprocessCapId');
+        if (input) input.value = normalized;
+        lookupInprocessingCadet();
+    }, 120);
+}
+
+function getOrgChartPersonOptions() {
+    const normalize = (v) => normalizeCapId(v);
+    const seen = new Set();
+    return (appState.roster || [])
+        .filter(r => r && r.cap_id)
+        .map(r => ({
+            capId: normalize(r.cap_id),
+            name: (r.full_name || r.name || '').trim() || 'Unknown'
+        }))
+        .filter(p => p.capId && !seen.has(p.capId) && seen.add(p.capId));
+}
+
+function makeOrgChartNodeKey() {
+    return `ORG-${Math.random().toString(36).slice(2, 10).toUpperCase()}`;
+}
+
+function getOrgChartReportsToOptions(currentPositionId = null, chartType = 'senior') {
+    const normalize = (v) => String(v || '').trim();
+    const current = (appState.orgChartPositions || []).find(p => String(p.id) === String(currentPositionId)) || null;
+    const currentCap = current ? normalize(current.cap_id) : '';
+    const seen = new Set();
+    return (appState.orgChartPositions || [])
+        .filter(p => String(p.chart_type || 'senior').toLowerCase() === String(chartType || 'senior').toLowerCase())
+        .map(p => {
+            const cap = normalize(p.cap_id);
+            const personName = String(p.person_name || '').trim();
+            return {
+                capId: cap,
+                label: personName ? `${p.position_title} - ${personName}` : `${p.position_title}`
+            };
+        })
+        .filter(p => p.capId && p.capId !== currentCap && !seen.has(p.capId) && seen.add(p.capId));
+}
+
+function openAddOrgChartPositionModal() {
+    openOrgChartPositionModal();
+}
+
+function openEditOrgChartPositionModal(positionId) {
+    const position = (appState.orgChartPositions || []).find(p => String(p.id) === String(positionId));
+    if (!position) return;
+    openOrgChartPositionModal(position);
+}
+
+function openOrgChartPositionModal(position = null) {
+    const selectedChartType = String(position?.chart_type || appState.orgChartActiveType || 'senior').toLowerCase() === 'cadet' ? 'cadet' : 'senior';
+    const reportsToOptions = getOrgChartReportsToOptions(position ? position.id : null, selectedChartType);
+    const selectedName = (position?.person_name || '').replace(/"/g, '&quot;');
+    const selectedReportsTo = position ? String(position.reports_to_cap_id || '').trim() : '';
+    const selectedCallsign = (position?.callsign || '').replace(/"/g, '&quot;');
+    const selectedPhone = (position?.phone || '').replace(/"/g, '&quot;');
+    const selectedEmail = (position?.email || '').replace(/"/g, '&quot;');
+    const title = position ? 'Edit Org Chart Position' : 'Add Org Chart Position';
+    const modal = createModal(title, `
+        <div class="form-row">
+            <label class="form-label">Position Title</label>
+            <input type="text" class="form-input" id="orgChartPositionTitle" placeholder="e.g., Encampment Commander" value="${(position?.position_title || '').replace(/"/g, '&quot;')}">
+        </div>
+        <div class="form-row">
+            <label class="form-label">Chart</label>
+            <select class="form-select" id="orgChartChartType">
+                <option value="senior" ${selectedChartType === 'senior' ? 'selected' : ''}>Senior Member</option>
+                <option value="cadet" ${selectedChartType === 'cadet' ? 'selected' : ''}>Cadet</option>
+            </select>
+        </div>
+        <div class="form-row">
+            <label class="form-label">Person Name</label>
+            <input type="text" class="form-input" id="orgChartPersonName" placeholder="Enter name" value="${selectedName}">
+        </div>
+        <div class="form-row">
+            <label class="form-label">Callsign</label>
+            <input type="text" class="form-input" id="orgChartPositionCallsign" placeholder="e.g., Alpha 1" value="${selectedCallsign}">
+        </div>
+        <div class="form-row">
+            <label class="form-label">Phone</label>
+            <input type="text" class="form-input" id="orgChartPositionPhone" placeholder="Phone number" value="${selectedPhone}">
+        </div>
+        <div class="form-row">
+            <label class="form-label">Email</label>
+            <input type="email" class="form-input" id="orgChartPositionEmail" placeholder="Email address" value="${selectedEmail}">
+        </div>
+        <div class="form-row">
+            <label class="form-label">Reports To</label>
+            <select class="form-select" id="orgChartReportsToCapId">
+                <option value="">None - Top Commander</option>
+                ${reportsToOptions.map(p => `<option value="${p.capId}" ${p.capId === selectedReportsTo ? 'selected' : ''}>${p.label}</option>`).join('')}
+            </select>
+        </div>
+        <div class="resource-details" id="orgChartPositionError" style="color:#f87171;margin-top:8px;"></div>
+    `, `
+        <button class="btn btn-blue" onclick="submitOrgChartPosition('${position ? 'edit' : 'add'}', '${position ? position.id : ''}')">Save</button>
+        <button class="btn btn-outline" onclick="closeModal()">Cancel</button>
+    `);
+    showModal(modal);
+}
+
+function wouldCreateOrgChartCycle(positionId, capId, reportsToCapId) {
+    const normalize = (v) => String(v || '').trim();
+    const targetCap = normalize(capId);
+    const parentCap = normalize(reportsToCapId);
+    if (!targetCap || !parentCap) return false;
+    if (targetCap === parentCap) return true;
+
+    const temp = (appState.orgChartPositions || []).map(p => ({ ...p }));
+    if (positionId) {
+        const idx = temp.findIndex(p => String(p.id) === String(positionId));
+        if (idx >= 0) {
+            temp[idx].cap_id = targetCap;
+            temp[idx].reports_to_cap_id = parentCap || null;
+        }
+    } else {
+        temp.push({ id: '__new__', cap_id: targetCap, reports_to_cap_id: parentCap });
+    }
+
+    const parentByCap = {};
+    temp.forEach(p => {
+        const child = normalize(p.cap_id);
+        const parent = normalize(p.reports_to_cap_id);
+        if (!child || !parent) return;
+        if (!parentByCap[child]) parentByCap[child] = new Set();
+        parentByCap[child].add(parent);
+    });
+
+    const visited = new Set();
+    const stack = [parentCap];
+    while (stack.length) {
+        const current = stack.pop();
+        if (!current) continue;
+        if (current === targetCap) return true;
+        if (visited.has(current)) continue;
+        visited.add(current);
+        const parents = parentByCap[current];
+        if (parents) parents.forEach(p => stack.push(p));
+    }
+    return false;
+}
+
+async function submitOrgChartPosition(mode, positionId = '') {
+    const titleEl = document.getElementById('orgChartPositionTitle');
+    const chartTypeEl = document.getElementById('orgChartChartType');
+    const nameEl = document.getElementById('orgChartPersonName');
+    const callsignEl = document.getElementById('orgChartPositionCallsign');
+    const phoneEl = document.getElementById('orgChartPositionPhone');
+    const emailEl = document.getElementById('orgChartPositionEmail');
+    const reportsEl = document.getElementById('orgChartReportsToCapId');
+    const errEl = document.getElementById('orgChartPositionError');
+    const setErr = (m) => { if (errEl) errEl.textContent = m; };
+
+    const positionTitle = (titleEl?.value || '').trim();
+    const chartType = String(chartTypeEl?.value || appState.orgChartActiveType || 'senior').toLowerCase() === 'cadet' ? 'cadet' : 'senior';
+    const personName = (nameEl?.value || '').trim();
+    const callsign = (callsignEl?.value || '').trim();
+    const phone = (phoneEl?.value || '').trim();
+    const email = (emailEl?.value || '').trim();
+    const reportsToCapId = String(reportsEl?.value || '').trim();
+
+    setErr('');
+    if (!appState.selectedEvent || !appState.selectedEvent.id) { setErr('Select an event first.'); return; }
+    if (!positionTitle) { setErr('Position title is required.'); return; }
+    if (!personName) { setErr('Person name is required.'); return; }
+
+    const existing = (appState.orgChartPositions || []).find(p => String(p.id) === String(positionId));
+    const nodeKey = mode === 'edit' && existing ? String(existing.cap_id || '').trim() : makeOrgChartNodeKey();
+    if (!nodeKey) { setErr('Unable to generate org chart node key.'); return; }
+
+    if (reportsToCapId && wouldCreateOrgChartCycle(positionId || null, nodeKey, reportsToCapId)) {
+        setErr('Reporting structure creates a cycle. Choose a different Reports To value.');
+        return;
+    }
+
+    showLoading();
+    try {
+        if (mode === 'edit' && positionId) {
+            await updateOrgChartPosition(positionId, {
+                cap_id: nodeKey,
+                chart_type: chartType,
+                person_name: personName,
+                position_title: positionTitle,
+                callsign: callsign || null,
+                phone: phone || null,
+                email: email || null,
+                reports_to_cap_id: reportsToCapId || null
+            });
+        } else {
+            await createOrgChartPosition({
+                event_id: appState.selectedEvent.id,
+                cap_id: nodeKey,
+                chart_type: chartType,
+                person_name: personName,
+                position_title: positionTitle,
+                callsign: callsign || null,
+                phone: phone || null,
+                email: email || null,
+                reports_to_cap_id: reportsToCapId || null
+            });
+        }
+        await loadOrgChartDataForSelectedEvent();
+        closeModal();
+        renderCurrentView();
+    } catch (error) {
+        console.error('Save org chart position failed:', error);
+        setErr(error.message || 'Failed to save position.');
+    } finally {
+        hideLoading();
+    }
+}
+
+async function deleteOrgChartPositionAction(positionId) {
+    if (!positionId) return;
+    if (!confirm('Delete this org chart position?')) return;
+    showLoading();
+    try {
+        await deleteOrgChartPosition(positionId);
+        await loadOrgChartDataForSelectedEvent();
+        renderCurrentView();
+    } catch (error) {
+        console.error('Delete org chart position failed:', error);
+        alert('Failed to delete position.');
+    } finally {
+        hideLoading();
+    }
+}
+
 function returnToEvents() {
     appState.selectedEvent = null;
     localStorage.removeItem('cap-event-selected-event-id');
     appState.currentView = 'events';
+    persistCurrentView();
     appState.inprocessProfile = null;
     appState.inprocessMessage = '';
     appState.approvalWarning = null;
@@ -610,6 +1093,98 @@ function resetScannerReady() {
     focusCapInput();
 }
 
+async function loadBilletingDataForSelectedEvent() {
+    if (appState.selectedEvent && appState.selectedEvent.id) {
+        let bldgs = [];
+        try {
+            bldgs = await getBuildingsForEvent(appState.selectedEvent.id);
+        } catch (err) {
+            console.warn('loadBilletingData: buildings fetch failed', err);
+        }
+        appState.billetingBuildings = bldgs || [];
+        const floorsBy = {};
+        const roomsBy = {};
+        const assignmentsByRoom = {};
+        for (const b of (bldgs || [])) {
+            let floors = [];
+            try {
+                floors = await getFloorsForBuilding(b.id);
+            } catch (err) {
+                console.warn(`loadBilletingData: floors fetch failed for building ${b.id}`, err);
+            }
+            floorsBy[b.id] = floors || [];
+            for (const f of floorsBy[b.id]) {
+                let rooms = [];
+                try {
+                    rooms = await getRoomsForFloor(f.id);
+                } catch (err) {
+                    console.warn(`loadBilletingData: rooms fetch failed for floor ${f.id}`, err);
+                }
+                roomsBy[f.id] = rooms || [];
+                for (const r of roomsBy[f.id]) {
+                    try {
+                        assignmentsByRoom[r.id] = await getAssignmentsForRoom(r.id);
+                    } catch (err) {
+                        console.warn(`loadBilletingData: assignments fetch failed for room ${r.id}`, err);
+                        assignmentsByRoom[r.id] = [];
+                    }
+                }
+            }
+        }
+        appState.billetingFloors = floorsBy;
+        appState.billetingRooms = roomsBy;
+        appState.billetingBunks = {};
+        appState.billetingAssignmentsByRoom = assignmentsByRoom;
+        appState.billetingByCap = {};
+        const allowedBuildingIds = new Set((bldgs || []).map(b => String(b.id)));
+        const allowedFloorIds = new Set(Object.values(floorsBy).flat().map(f => String(f.id)));
+        const prevBuildingExpanded = appState.billetingExpandedBuildings || {};
+        const prevFloorExpanded = appState.billetingExpandedFloors || {};
+        appState.billetingExpandedBuildings = Object.fromEntries(
+            Object.entries(prevBuildingExpanded).filter(([id, expanded]) => !!expanded && allowedBuildingIds.has(String(id)))
+        );
+        appState.billetingExpandedFloors = Object.fromEntries(
+            Object.entries(prevFloorExpanded).filter(([id, expanded]) => !!expanded && allowedFloorIds.has(String(id)))
+        );
+        return;
+    }
+
+    appState.billetingBuildings = [];
+    appState.billetingFloors = {};
+    appState.billetingRooms = {};
+    appState.billetingBunks = {};
+    appState.billetingAssignmentsByRoom = {};
+    appState.billetingByCap = {};
+    appState.billetingExpandedBuildings = {};
+    appState.billetingExpandedFloors = {};
+}
+
+async function loadOrgChartDataForSelectedEvent() {
+    if (appState.selectedEvent && appState.selectedEvent.id) {
+        const positions = await getOrgChartPositionsByEvent(appState.selectedEvent.id);
+        appState.orgChartPositions = Array.isArray(positions) ? positions : [];
+        return;
+    }
+    appState.orgChartPositions = [];
+    appState.orgChartCollapsedCapIds = {};
+}
+
+function nextInprocessPerson() {
+    // Clear current lookup/profile and UI state for the next scan
+    appState.inprocessProfile = null;
+    appState.inprocessMessage = '';
+    appState.inprocessStation = null;
+    appState.approvalWarning = null;
+    appState.inprocessMissingCapId = '';
+    appState.manualEntryOpen = false;
+    const input = document.getElementById('inprocessCapId');
+    if (input) input.value = '';
+    const staffBox = document.getElementById('staffOverride');
+    if (staffBox) staffBox.checked = false;
+    renderCurrentView();
+    focusCapInput();
+}
+
 async function loadInprocessingStations(eventId) {
     if (!eventId) {
         const container = document.getElementById('inprocessingStationsContainer');
@@ -627,7 +1202,12 @@ async function loadInprocessingStations(eventId) {
         appState.checkins = (checkinsArr || []).flat();
 
         const container = document.getElementById('inprocessingStationsContainer');
-        if (container) container.innerHTML = renderInprocessingStations(appState.stations, appState.personnel, appState.checkins);
+        if (container) {
+            const activeEntry = typeof getActiveRosterEntry === 'function' ? getActiveRosterEntry() : null;
+            container.innerHTML = (appState.inprocessProfile && activeEntry)
+                ? renderInprocessingStationsForProfile(appState.stations, appState.inprocessProfile, appState.checkins)
+                : '';
+        }
     } catch (error) {
         console.error('Failed to load stations:', error);
         alert('Failed to load stations');
@@ -656,7 +1236,7 @@ async function loadAllStations() {
                 <div class="resource-item">
                     <div>
                         <div class="resource-name">${station.name}</div>
-                        <div class="resource-details">Event: ${evt.title || '—'}</div>
+                        <div class="resource-details">Event: ${evt.title || '-'}</div>
                     </div>
                     <div class="flex gap-2">
                         <button class="btn btn-outline btn-small" onclick="openEditStationModal('${station.id.replace(/'/g, "\\'")}')">Edit</button>
@@ -1118,7 +1698,7 @@ async function loadEventStations(eventId) {
         const checkinsArr = await Promise.all((stations || []).map(s => getCheckins(s.id)));
         appState.checkins = (checkinsArr || []).flat();
         const container = document.getElementById('eventStationsList');
-        if (container) container.innerHTML = renderInprocessingStations(appState.stations, appState.personnel, appState.checkins);
+        if (container) container.innerHTML = '';
     } catch (error) {
         console.error('Failed to load event stations:', error);
     }
@@ -1176,7 +1756,23 @@ async function saveStation(e, eventId) {
 }
 
 async function switchView(viewName) {
+    const prevView = appState.currentView;
     appState.currentView = viewName;
+    persistCurrentView();
+
+    // Privacy: clear any loaded person data when leaving in/out-processing
+    if (prevView === 'inprocessing' && viewName !== 'inprocessing') {
+        appState.inprocessProfile = null;
+        appState.inprocessMessage = '';
+        appState.inprocessStation = null;
+        appState.approvalWarning = null;
+        appState.manualEntryOpen = false;
+        appState.inprocessMissingCapId = '';
+    }
+    if (prevView === 'outprocessing' && viewName !== 'outprocessing') {
+        appState.outprocessProfile = null;
+        appState.outprocessMessage = '';
+    }
     
     // Update nav items
     document.querySelectorAll('.nav-item').forEach(item => {
@@ -1341,6 +1937,7 @@ function getReportRecords(reportName) {
         case 'Roster':
             return roster;
         case 'Assets':
+        case 'Assets & Vehicles':
             return assets;
         case 'Personnel':
             return personnel;
@@ -1423,7 +2020,7 @@ function getReportText(reportName) {
     };
 
     const formatInlineValue = (value) => {
-        if (value === null || value === undefined || value === '') return '—';
+        if (value === null || value === undefined || value === '') return '-';
         if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return String(value);
         return value;
     };
@@ -1431,7 +2028,7 @@ function getReportText(reportName) {
     const formatObjectLine = (obj) => {
         if (!obj || typeof obj !== 'object') return formatInlineValue(obj);
         const keys = Object.keys(obj).sort((a, b) => a.localeCompare(b));
-        if (!keys.length) return '—';
+        if (!keys.length) return '-';
         return keys.map(key => `${key}=${formatInlineValue(obj[key])}`).join('; ');
     };
 
@@ -1451,14 +2048,14 @@ function getReportText(reportName) {
         }
         if (value && typeof value === 'object') {
             const keys = Object.keys(value).sort((a, b) => a.localeCompare(b));
-            if (!keys.length) return ['—'];
+            if (!keys.length) return ['-'];
             return keys.map(key => `${key}=${formatInlineValue(value[key])}`);
         }
         return [String(formatInlineValue(value))];
     };
 
     const formatRecord = (record) => {
-        if (!record) return '—';
+        if (!record) return '-';
         const keys = Object.keys(record).sort((a, b) => a.localeCompare(b));
         return keys.map(key => {
             const lines = formatValueLines(record[key]);
@@ -1472,12 +2069,12 @@ function getReportText(reportName) {
 
     switch (reportName) {
         case 'Inprocessing': {
-            const students = roster.filter(r => String(r.role || '') !== 'staff');
-            if (!students.length) {
+            const inprocessed = roster.filter(r => r.signed_in_at && !r.signed_out_at);
+            if (!inprocessed.length) {
                 lines.push('No inprocessing records.');
                 break;
             }
-            students.forEach((entry, index) => {
+            inprocessed.forEach((entry, index) => {
                 lines.push(`Record ${index + 1} | ${formatName(entry)} | CAP ${entry.cap_id || 'N/A'}`);
                 lines.push(formatRecord(entry));
                 lines.push('------------------------------------------------------------');
@@ -1485,24 +2082,26 @@ function getReportText(reportName) {
             break;
         }
         case 'Outprocessing': {
-            if (!roster.length) {
+            const outprocessed = roster.filter(r => !!r.signed_out_at);
+            if (!outprocessed.length) {
                 lines.push('No outprocessing records.');
                 break;
             }
-            roster.forEach((entry, index) => {
+            outprocessed.forEach((entry, index) => {
                 lines.push(`Record ${index + 1} | ${formatName(entry)} | CAP ${entry.cap_id || 'N/A'}`);
                 lines.push(formatRecord(entry));
                 lines.push('------------------------------------------------------------');
             });
             break;
         }
-        case 'Assets': {
+        case 'Assets':
+        case 'Assets & Vehicles': {
             if (!assets.length) {
-                lines.push('No assets available.');
+                lines.push('No assets/vehicles available.');
                 break;
             }
             assets.forEach((asset, index) => {
-                lines.push(`Record ${index + 1} | ${asset.type || 'Asset'} ${asset.asset_id || asset.id || ''}`.trim());
+                lines.push(`Record ${index + 1} | ${asset.type || 'Asset/Vehicle'} ${asset.asset_id || asset.id || ''}`.trim());
                 lines.push(formatRecord(asset));
                 lines.push('------------------------------------------------------------');
             });
@@ -1567,6 +2166,7 @@ function getReportText(reportName) {
             Outprocessing: ['roster'],
             Roster: ['roster'],
             Assets: ['asset', 'asset_personnel', 'activity_asset'],
+            'Assets & Vehicles': ['asset', 'asset_personnel', 'activity_asset'],
             Personnel: ['personnel', 'activity_personnel', 'asset_personnel'],
             Locations: ['location']
         };
@@ -1631,8 +2231,7 @@ async function addLogEntryAction() {
     const person = appState.personnel.find(p => String(p.cap_id) === String(user.cap_id));
     const entry = {
         cap_id: user.cap_id,
-        firstName: person ? (person.name || '').split(' ')[0] : '',
-        lastName: person ? (person.name || '').split(' ').slice(1).join(' ') : '',
+        name: person ? (person.name || '') : (user.name || ''),
         rank: person ? (person.rank || '') : '',
         message,
         created_at: new Date().toISOString()
@@ -1699,6 +2298,25 @@ async function adminSetUserRole() {
     if (!capId) return;
     await setUserAccessLevel(capId, role);
     capInput.value = '';
+}
+
+async function removeUserAccess(capId) {
+    if (!capId) return;
+    if (String(capId) === '217545') {
+        alert('Cannot remove reserved admin user.');
+        return;
+    }
+    showLoading();
+    try {
+        await deleteUser(capId);
+        appState.users = await getUsers();
+        renderCurrentView();
+    } catch (error) {
+        console.error('Remove user failed:', error);
+        alert('Failed to remove user.');
+    } finally {
+        hideLoading();
+    }
 }
 
 async function addAdminRole() {
@@ -1846,10 +2464,523 @@ function lookupInprocessingCadet() {
         .finally(() => {
             hideLoading();
             renderCurrentView();
+            // Load billeting summary if profile was found
+            if (appState.inprocessProfile && appState.inprocessProfile.capId) {
+                setTimeout(() => {
+                    renderBilletingSummaryData(appState.inprocessProfile.capId);
+                }, 100);
+            }
         });
 }
 
+async function lookupOutprocessingCadet() {
+    const input = document.getElementById('outprocessCapId');
+    if (!input) return;
+    const capId = normalizeCapId(input.value);
+    if (!capId) {
+        appState.outprocessProfile = null;
+        appState.outprocessMessage = 'Enter a CAP ID to search.';
+        renderCurrentView();
+        return;
+    }
+    if (!appState.selectedEvent) {
+        appState.outprocessProfile = null;
+        appState.outprocessMessage = 'Select an event first.';
+        renderCurrentView();
+        return;
+    }
+    showLoading();
+    try {
+        // refresh roster to be sure
+        appState.roster = await getRoster(appState.selectedEvent.id);
+        const entry = appState.roster.find(r => normalizeCapId(r.cap_id) === capId && !r.signed_out_at);
+        if (!entry) {
+            appState.outprocessProfile = null;
+            appState.outprocessMessage = 'Not currently signed in.';
+            return;
+        }
+        const profile = entry.profile || {
+            capId: entry.cap_id,
+            name: entry.name || '',
+            full_name: entry.name || '',
+            rank: entry.rank || '',
+            memberType: entry.role === 'staff' ? 'Senior' : 'Cadet',
+            memberStatus: entry.member_status || '',
+            membershipExpiration: entry.expiration || '',
+            shirtSize: entry.shirt_size || '',
+            cellPhone: entry.cell_phone || '',
+            homePhone: entry.home_phone || '',
+            emergencyContact: entry.emergency_contact_name || '',
+            emergencyPhone: entry.emergency_contact_phone || '',
+            email: entry.email || '',
+            accommodations: [],
+            allergies: [],
+            stations: entry.stations || {},
+            flags: entry.flags || []
+        };
+        appState.outprocessProfile = profile;
+        appState.outprocessMessage = '';
+    } catch (err) {
+        console.error('Outprocessing lookup failed:', err);
+        appState.outprocessProfile = null;
+        appState.outprocessMessage = 'Lookup failed.';
+    } finally {
+        hideLoading();
+        renderCurrentView();
+        // Load billeting summary if profile was found
+        if (appState.outprocessProfile && appState.outprocessProfile.capId) {
+            setTimeout(() => {
+                renderBilletingSummaryData(appState.outprocessProfile.capId);
+            }, 100);
+        }
+    }
+}
+
+// Billeting building
+function openAddBuildingModal() {
+    const modal = createModal('ADD BUILDING', `
+        <div class="form-row">
+            <label class="form-label">Building Name</label>
+            <input type="text" class="form-input" id="buildingName" placeholder="Name" required>
+        </div>
+        <div class="form-row">
+            <label class="form-label">Gender Restriction</label>
+            <select class="form-select" id="buildingGender">
+                <option value="mixed">Mixed</option>
+                <option value="male">Male</option>
+                <option value="female">Female</option>
+            </select>
+        </div>
+        <div class="resource-details" id="buildingError" style="color:#f87171;margin-top:8px;"></div>
+    `, `
+        <button class="btn btn-blue" onclick="submitAddBuilding()">Save</button>
+        <button class="btn btn-outline" onclick="closeModal()">Cancel</button>
+    `);
+    showModal(modal);
+}
+
+async function submitAddBuilding() {
+    const nameEl = document.getElementById('buildingName');
+    const genderEl = document.getElementById('buildingGender');
+    const errEl = document.getElementById('buildingError');
+    const setErr = (m) => { if (errEl) errEl.textContent = m; };
+    setErr('');
+    if (!appState.selectedEvent) { setErr('Select an event first.'); return; }
+    const name = nameEl?.value.trim();
+    const gender = genderEl?.value || 'mixed';
+    if (!name) { setErr('Name required'); return; }
+    showLoading();
+    try {
+        await createBuilding(appState.selectedEvent.id, name, gender);
+        appState.billetingBuildings = await getBuildingsForEvent(appState.selectedEvent.id);
+        closeModal();
+        renderCurrentView();
+    } catch (e) {
+        console.error(e);
+        setErr(e.message || 'Failed to add building.');
+    } finally {
+        hideLoading();
+    }
+}
+
+function editBuildingModal(id) {
+    const b = (appState.billetingBuildings || []).find(x => x.id === id);
+    if (!b) return;
+    const modal = createModal('EDIT BUILDING', `
+        <div class="form-row">
+            <label class="form-label">Building Name</label>
+            <input type="text" class="form-input" id="buildingName" value="${b.name || ''}" required>
+        </div>
+        <div class="form-row">
+            <label class="form-label">Gender Restriction</label>
+            <select class="form-select" id="buildingGender">
+                <option value="mixed" ${b.gender_restriction === 'mixed' ? 'selected' : ''}>Mixed</option>
+                <option value="male" ${b.gender_restriction === 'male' ? 'selected' : ''}>Male</option>
+                <option value="female" ${b.gender_restriction === 'female' ? 'selected' : ''}>Female</option>
+            </select>
+        </div>
+        <div class="resource-details" id="buildingError" style="color:#f87171;margin-top:8px;"></div>
+    `, `
+        <button class="btn btn-blue" onclick="submitUpdateBuilding('${id}')">Save</button>
+        <button class="btn btn-outline" onclick="closeModal()">Cancel</button>
+    `);
+    showModal(modal);
+}
+
+async function submitUpdateBuilding(id) {
+    const nameEl = document.getElementById('buildingName');
+    const genderEl = document.getElementById('buildingGender');
+    const errEl = document.getElementById('buildingError');
+    const setErr = (m) => { if (errEl) errEl.textContent = m; };
+    setErr('');
+    const name = nameEl?.value.trim();
+    const gender = genderEl?.value || 'mixed';
+    if (!name) { setErr('Name required'); return; }
+    showLoading();
+    try {
+        await updateBuilding(id, { name, gender_restriction: gender });
+        appState.billetingBuildings = await getBuildingsForEvent(appState.selectedEvent.id);
+        closeModal();
+        renderCurrentView();
+    } catch (e) {
+        console.error(e);
+        setErr(e.message || 'Failed to update building.');
+    } finally {
+        hideLoading();
+    }
+}
+
+function openAddFloorModal(buildingId, buildingName) {
+    const modal = createModal(`Add Floor to: ${buildingName}`, `
+        <div class="form-row">
+            <label class="form-label">Floor Number/Label</label>
+            <input type="text" class="form-input" id="floorNumber" placeholder="e.g., 1, 2, 3, Ground">
+        </div>
+        <div class="resource-details" id="floorError" style="color:#f87171;margin-top:8px;"></div>
+    `, `
+        <button class="btn btn-blue" onclick="submitAddFloor('${buildingId}')">Save</button>
+        <button class="btn btn-outline" onclick="closeModal()">Cancel</button>
+    `);
+    showModal(modal);
+}
+
+async function submitAddFloor(buildingId) {
+    const numEl = document.getElementById('floorNumber');
+    const errEl = document.getElementById('floorError');
+    const num = numEl?.value.trim();
+    const setErr = (m) => { if (errEl) errEl.textContent = m; };
+    setErr('');
+    if (!num) { setErr('Floor number required'); return; }
+    showLoading();
+    try {
+        await createFloor(buildingId, num);
+        // refresh floors for building
+        appState.billetingFloors[buildingId] = await getFloorsForBuilding(buildingId);
+        closeModal();
+        renderCurrentView();
+    } catch (e) {
+        console.error(e);
+        setErr(e.message || 'Failed to add floor.');
+    } finally {
+        hideLoading();
+    }
+}
+
+async function confirmDeleteBuilding(id) {
+    if (!confirm('Delete building and all floors/rooms/bunks?')) return;
+    showLoading();
+    try {
+        await deleteBuilding(id);
+        await loadBilletingDataForSelectedEvent();
+        renderCurrentView();
+    } catch (e) {
+        console.error(e);
+        alert('Failed to delete building.');
+    } finally {
+        hideLoading();
+    }
+}
+
+function openAddRoomsModal(floorId, floorNumber, buildingId, buildingName) {
+    const modal = createModal(`Add Rooms and Bunks: ${buildingName} (Floor ${floorNumber})`, `
+        <div class="tag-input-row" style="margin-bottom:8px;">
+            <div class="resource-details" style="max-width:140px; width:100%; font-weight:700;">Room Number</div>
+            <div class="resource-details" style="max-width:100px; width:100%; font-weight:700;">Bunks</div>
+        </div>
+        <div id="roomsContainer">
+            ${renderRoomRow()}
+        </div>
+        <button class="btn btn-outline btn-small" onclick="addRoomRow()">+ Add Another Room</button>
+        <div class="resource-details" id="roomsError" style="color:#f87171;margin-top:8px;"></div>
+    `, `
+        <button class="btn btn-blue" onclick="submitAddRooms('${floorId}', '${buildingId}')">Save All</button>
+        <button class="btn btn-outline" onclick="closeModal()">Cancel</button>
+    `);
+    showModal(modal);
+}
+
+function renderRoomRow() {
+    return `
+        <div class="room-row" style="margin-top:8px;">
+            <div class="tag-input-row">
+                <input type="text" class="form-input room-number" placeholder="e.g. 101" style="max-width:140px;">
+                <input type="number" class="form-input room-beds" placeholder="Beds" value="4" min="1" style="max-width:100px;">
+            </div>
+        </div>
+    `;
+}
+
+function addRoomRow() {
+    const container = document.getElementById('roomsContainer');
+    if (container) container.insertAdjacentHTML('beforeend', renderRoomRow());
+}
+
+async function submitAddRooms(floorId, buildingId) {
+    const errEl = document.getElementById('roomsError');
+    const setErr = (m) => { if (errEl) errEl.textContent = m; };
+    setErr('');
+    const rows = Array.from(document.querySelectorAll('.room-row'));
+    const roomsData = rows.map(row => {
+        const num = row.querySelector('.room-number')?.value.trim();
+        const beds = parseInt(row.querySelector('.room-beds')?.value || '0', 10) || 0;
+        return { room_number: num, bunk_capacity: beds };
+    }).filter(r => r.room_number && r.bunk_capacity > 0);
+    if (!roomsData.length) { setErr('Enter at least one valid room.'); return; }
+    showLoading();
+    try {
+        await createRoomsWithBunks(floorId, roomsData);
+        appState.billetingRooms[floorId] = await getRoomsForFloor(floorId);
+        closeModal();
+        renderCurrentView();
+    } catch (e) {
+        console.error(e);
+        setErr(e.message || 'Failed to add rooms.');
+    } finally {
+        hideLoading();
+    }
+}
+
+async function confirmDeleteRoom(roomId) {
+    if (!confirm('Delete this room and its bunks?')) return;
+    showLoading();
+    try {
+        await deleteRoom(roomId);
+        const floorId = Object.keys(appState.billetingRooms || {}).find(fid => (appState.billetingRooms[fid] || []).some(r => r.id === roomId));
+        if (floorId) {
+            appState.billetingRooms[floorId] = await getRoomsForFloor(floorId);
+        }
+        if (appState.billetingAssignmentsByRoom) delete appState.billetingAssignmentsByRoom[roomId];
+        if (appState.billetingBunks) delete appState.billetingBunks[roomId];
+        renderCurrentView();
+    } catch (e) {
+        console.error(e);
+        alert('Failed to delete room.');
+    } finally {
+        hideLoading();
+    }
+}
+
+function openAssignBunksModal(buildingId, floorId, roomId, buildingName, floorNumber, roomNumber) {
+    showLoading();
+    (async () => {
+        try {
+            const bunks = await getBunksForRoom(roomId);
+            const assignments = await getAssignmentsForRoom(roomId);
+            appState.billetingBunks[roomId] = bunks;
+            appState.billetingAssignmentsByRoom[roomId] = assignments;
+            const html = renderAssignBunksModal(buildingId, floorId, roomId, buildingName, floorNumber, roomNumber, bunks, assignments);
+            showModal(html);
+        } catch (e) {
+            console.error(e);
+            alert(`Failed to load beds. ${e?.message || ''}`.trim());
+        } finally {
+            hideLoading();
+        }
+    })();
+}
+
+function renderAssignBunksModal(buildingId, floorId, roomId, buildingName, floorNumber, roomNumber, bunks, assignments) {
+    const formatOccupantLabel = (capId) => {
+        const cap = normalizeCapId(capId || '');
+        const rosterEntry = (appState.roster || []).find(r => normalizeCapId(r.cap_id) === cap) || null;
+        const name = (rosterEntry?.full_name || rosterEntry?.name || '').trim();
+        const rank = (rosterEntry?.rank || '').trim();
+        if (rank && name) return `${rank} ${name} (CAP ${cap})`;
+        if (name) return `${name} (CAP ${cap})`;
+        return `CAP ${cap || capId || ''}`.trim();
+    };
+
+    const rows = bunks.map(b => {
+        const asn = assignments.find(a => a.bunk_id === b.id);
+        const label = asn ? formatOccupantLabel(asn.cap_id) : '[Empty]';
+        const btn = asn
+            ? `<button class="btn btn-outline btn-small" onclick="removeBedAssignmentAction('${asn.id}', '${roomId}', '${buildingId}', '${floorId}')">Remove</button>`
+            : `<button class="btn btn-blue btn-small" onclick="openAssignBedModal('${b.id}', '${roomId}', '${buildingId}', '${floorId}')">Assign Bed</button>`;
+        return `<div class="resource-item"><div class="flex-between" style="align-items:center;"><div class="resource-name">Bunk ${b.bunk_number}: ${label}</div><div>${btn}</div></div></div>`;
+    }).join('');
+
+    return createModal(`Room ${roomNumber} (Floor ${floorNumber}) - ${buildingName}`, `
+        <div class="resource-list">
+            ${rows || '<div class="empty-state-text text-center">No bunks.</div>'}
+        </div>
+    `, `<button class="btn btn-outline" onclick="closeModal()">Close</button>`);
+}
+
+function openAssignBedModal(bedId, roomId, buildingId, floorId) {
+    appState.billetingAssignCandidate = null;
+    const modal = createModal('Assign Bed', `
+        <div class="form-row">
+            <label class="form-label">CAP ID</label>
+            <div class="tag-input-row">
+                <input type="text" class="form-input" id="assignBedCapId" placeholder="Enter CAP ID" maxlength="10" style="max-width:180px;">
+                <button class="btn btn-outline btn-small" onclick="lookupAssignMember()">Lookup</button>
+            </div>
+        </div>
+        <div class="resource-item" id="assignBedMemberCard" style="display:none;">
+            <div class="resource-name" id="assignBedMemberName">Name</div>
+            <div class="resource-details" id="assignBedMemberMeta">Rank | Age</div>
+        </div>
+        <div class="resource-details" id="assignError" style="color:#f87171;margin-top:8px;"></div>
+    `, `
+        <button class="btn btn-blue" onclick="submitAssignBed('${bedId}', '${roomId}', '${buildingId}', '${floorId}')">Assign</button>
+        <button class="btn btn-outline" onclick="closeModal()">Cancel</button>
+    `);
+    showModal(modal);
+}
+
+async function lookupAssignMember() {
+    const capInput = document.getElementById('assignBedCapId');
+    const errEl = document.getElementById('assignError');
+    const cardEl = document.getElementById('assignBedMemberCard');
+    const nameEl = document.getElementById('assignBedMemberName');
+    const metaEl = document.getElementById('assignBedMemberMeta');
+    const setErr = (m) => { if (errEl) errEl.textContent = m; };
+    setErr('');
+    if (cardEl) cardEl.style.display = 'none';
+    appState.billetingAssignCandidate = null;
+
+    const capId = normalizeCapId(capInput?.value || '');
+    if (!capId) { setErr('Enter a CAP ID.'); return; }
+    if (!appState.selectedEvent || !appState.selectedEvent.id) { setErr('Select an event first.'); return; }
+
+    showLoading();
+    try {
+        let rosterEntry = (appState.roster || []).find(r => normalizeCapId(r.cap_id) === capId) || null;
+        if (!rosterEntry) {
+            const profile = await getEventProfile(appState.selectedEvent.id, capId);
+            rosterEntry = profile?.roster || null;
+        }
+        if (!rosterEntry) {
+            setErr('CAP ID not found in this event roster.');
+            return;
+        }
+
+        const name = rosterEntry.full_name || rosterEntry.name || 'Unknown';
+        const rank = rosterEntry.rank || 'N/A';
+        const age = Number.isFinite(Number(rosterEntry.age)) ? String(Number(rosterEntry.age)) : 'N/A';
+        const gender = (rosterEntry.gender || rosterEntry.Gender || '').toString();
+
+        appState.billetingAssignCandidate = {
+            capId: normalizeCapId(rosterEntry.cap_id || capId),
+            name,
+            rank,
+            age,
+            gender
+        };
+
+        if (nameEl) nameEl.textContent = `${name} (CAP ${appState.billetingAssignCandidate.capId})`;
+        if (metaEl) metaEl.textContent = `Rank: ${rank} | Age: ${age}`;
+        if (cardEl) cardEl.style.display = 'block';
+    } catch (e) {
+        console.error(e);
+        setErr(e.message || 'Lookup failed.');
+    } finally {
+        hideLoading();
+    }
+}
+
+async function submitAssignBed(bedId, roomId, buildingId, floorId) {
+    const errEl = document.getElementById('assignError');
+    const setErr = (m) => { if (errEl) errEl.textContent = m; };
+    setErr('');
+    const candidate = appState.billetingAssignCandidate;
+    if (!candidate || !candidate.capId) { setErr('Lookup a member by CAP ID first.'); return; }
+    const capId = candidate.capId;
+    // Occupancy validation
+    const existing = (appState.billetingAssignmentsByRoom?.[roomId] || []).find(a => String(a.bunk_id) === String(bedId));
+    if (existing) { setErr('Bunk already assigned.'); return; }
+    // Gender validation
+    const building = (appState.billetingBuildings || []).find(b => b.id === buildingId);
+    if (building && building.gender_restriction && building.gender_restriction !== 'mixed') {
+        const g = (candidate.gender || '').toString().toLowerCase();
+        const restriction = building.gender_restriction.toLowerCase();
+        if (restriction === 'male' && g.startsWith('f')) { setErr('Building is male only.'); return; }
+        if (restriction === 'female' && g.startsWith('m')) { setErr('Building is female only.'); return; }
+    }
+    showLoading();
+    try {
+        const actor = getCurrentUser();
+        await assignBunkToCadet(bedId, capId, actor ? actor.cap_id : null, appState.selectedEvent ? appState.selectedEvent.id : null);
+        appState.billetingAssignmentsByRoom[roomId] = await getAssignmentsForRoom(roomId);
+        appState.billetingBunks[roomId] = await getBunksForRoom(roomId);
+        const building = (appState.billetingBuildings || []).find(b => b.id === buildingId);
+        const floor = (appState.billetingFloors[buildingId] || []).find(f => f.id === floorId);
+        const room = (appState.billetingRooms[floorId] || []).find(r => r.id === roomId);
+        showModal(renderAssignBunksModal(buildingId, floorId, roomId, building?.name || '', floor?.floor_number || '', room?.room_number || '', appState.billetingBunks[roomId], appState.billetingAssignmentsByRoom[roomId]));
+        renderCurrentView();
+    } catch (e) {
+        console.error(e);
+        setErr(e.message || 'Failed to assign bed.');
+    } finally {
+        hideLoading();
+    }
+}
+
+async function removeBedAssignmentAction(assignmentId, roomId, buildingId, floorId) {
+    showLoading();
+    try {
+        await removeBedAssignment(assignmentId);
+        appState.billetingAssignmentsByRoom[roomId] = await getAssignmentsForRoom(roomId);
+        appState.billetingBunks[roomId] = await getBunksForRoom(roomId);
+        const building = (appState.billetingBuildings || []).find(b => b.id === buildingId);
+        const floor = (appState.billetingFloors[buildingId] || []).find(f => f.id === floorId);
+        const room = (appState.billetingRooms[floorId] || []).find(r => r.id === roomId);
+        showModal(renderAssignBunksModal(buildingId, floorId, roomId, building?.name || '', floor?.floor_number || '', room?.room_number || '', appState.billetingBunks[roomId], appState.billetingAssignmentsByRoom[roomId]));
+        renderCurrentView();
+    } catch (e) {
+        console.error(e);
+        alert('Failed to remove assignment.');
+    } finally {
+        hideLoading();
+    }
+}
+function openAddUserModal() {
+    showModal(renderAddUserModal());
+}
+
+async function submitAddUser() {
+    const nameEl = document.getElementById('newUserName');
+    const capEl = document.getElementById('newUserCapId');
+    const pinEl = document.getElementById('newUserPin');
+    const pin2El = document.getElementById('newUserPinConfirm');
+    const roleEl = document.getElementById('newUserRole');
+    const errorEl = document.getElementById('newUserError');
+    if (!nameEl || !capEl || !pinEl || !pin2El || !roleEl) return;
+    const name = nameEl.value.trim();
+    const capId = capEl.value.trim();
+    const pin = pinEl.value.trim();
+    const pin2 = pin2El.value.trim();
+    const role = roleEl.value;
+    const setError = (msg) => { if (errorEl) errorEl.textContent = msg; };
+    setError('');
+    if (!name || !capId || !pin || !pin2 || !role) { setError('All fields are required.'); return; }
+    if (!/^\d{8}$/.test(pin)) { setError('PIN must be exactly 8 digits.'); return; }
+    if (pin !== pin2) { setError('PINs do not match.'); return; }
+    if (capId === '217545') { setError('CAP ID 217545 is reserved.'); return; }
+    showLoading();
+    try {
+        const exists = await userExists(capId);
+        if (exists) { setError('User already exists.'); hideLoading(); return; }
+        await createNewUser({ capId, name, pin, role });
+        appState.users = await getUsers();
+        closeModal();
+        renderCurrentView();
+    } catch (err) {
+        console.error('Add user failed', err);
+        setError(err.message || 'Failed to create user.');
+    } finally {
+        hideLoading();
+    }
+}
+
 function handleInprocessAction() {
+    const alreadyIn = (typeof getActiveRosterEntry === 'function') ? getActiveRosterEntry() : null;
+    const capIdBypass = appState.inprocessProfile ? normalizeCapId(appState.inprocessProfile.capId) : '';
+    if (alreadyIn && capIdBypass !== '217545') {
+        appState.inprocessMessage = 'Already signed in.';
+        renderCurrentView();
+        return;
+    }
     // If a profile is already loaded, sign in immediately (no need to re-enter CAP ID)
     if (appState.inprocessProfile) {
         const role = (appState.inprocessProfile.memberType || '').toLowerCase() === 'senior' ? 'staff' : 'student';
@@ -1904,6 +3035,16 @@ async function signInInprocessing(role) {
     }
     const allEntries = appState.roster.filter(r => normalizeCapId(r.cap_id) === capId);
     const latestEntry = allEntries.sort((a, b) => (b.signed_in_at || '').localeCompare(a.signed_in_at || '')).shift();
+    const staffOverride = document.getElementById('staffOverride')?.checked;
+    if (staffOverride) {
+        role = 'staff';
+    }
+    const activeEntry = allEntries.find(r => !r.signed_out_at);
+    if (activeEntry && capId !== '217545') {
+        appState.inprocessMessage = 'Already signed in.';
+        renderCurrentView();
+        return;
+    }
     console.log('signIn check', { capId, latestEntry });
         const firstName = profile.firstName || profile.name_first || '';
         const lastName = profile.lastName || profile.name_last || '';
@@ -1912,6 +3053,14 @@ async function signInInprocessing(role) {
         showLoading();
         try {
         let updatedEntry = null;
+        // Preserve existing station state; fall back to profile or defaults, and add any missing event stations.
+        const mergeStations = (base = {}) => {
+            const merged = { ...buildDefaultStations(), ...(base || {}) };
+            (appState.stations || []).forEach(s => {
+                if (!merged[s.name]) merged[s.name] = { status: 'pending', flagged: false };
+            });
+            return merged;
+        };
         if (latestEntry) {
             updatedEntry = { ...latestEntry };
             updatedEntry.event_id = appState.selectedEvent.id;
@@ -1920,7 +3069,7 @@ async function signInInprocessing(role) {
             updatedEntry.role = role;
             updatedEntry.signed_in_at = now.toISOString();
             updatedEntry.signed_out_at = null;
-            updatedEntry.stations = buildDefaultStations();
+            updatedEntry.stations = mergeStations(latestEntry.stations || profile.stations);
             updatedEntry.flags = updatedEntry.flags || [];
             updatedEntry.profile = { ...profile };
             await updateRosterEntry(updatedEntry);
@@ -1933,7 +3082,7 @@ async function signInInprocessing(role) {
                 role,
                 signed_in_at: now.toISOString(),
                 signed_out_at: null,
-                stations: buildDefaultStations(),
+                stations: mergeStations(profile.stations),
                 flags: [],
                 profile: { ...profile }
             };
@@ -1955,6 +3104,9 @@ async function signInInprocessing(role) {
         await loadInprocessingStations(appState.selectedEvent.id);
         appState.inprocessMessage = '';
         renderCurrentView();
+        if (appState.inprocessProfile && appState.inprocessProfile.capId) {
+            setTimeout(() => renderBilletingSummaryData(appState.inprocessProfile.capId), 80);
+        }
     } catch (error) {
         console.error('Sign in failed:', error);
         const msg = error?.message || String(error);
@@ -1991,11 +3143,14 @@ async function completeStation() {
     if (appState.inprocessStation === 'Complete Inprocessing') {
         const unresolved = (entry.flags || []).some(f => !f.resolved);
         if (unresolved) {
-            alert('Flags must be resolved before completing inprocessing.');
+            alert('Resolve all flags before completing inprocessing.');
             return;
         }
-        const required = ['Forms Review', 'Medical', 'Inspection', 'Billeting', 'Supply'];
-        const incomplete = required.filter(name => entry.stations?.[name]?.status !== 'complete');
+        // Require all configured stations (except Complete Inprocessing) to be complete
+        const requiredNames = (appState.stations || [])
+            .map(s => s.name)
+            .filter(n => n && n.toLowerCase() !== 'complete inprocessing');
+        const incomplete = requiredNames.filter(name => (entry.stations?.[name]?.status || 'pending') !== 'complete');
         if (incomplete.length) {
             alert(`Complete these stations first: ${incomplete.join(', ')}`);
             return;
@@ -2016,6 +3171,12 @@ async function completeStation() {
         await updateRosterEntry(entry);
         appState.roster = await getRoster(appState.selectedEvent.id);
         // Keep the active profile/selection so station status updates in-place.
+        if (appState.inprocessProfile) {
+            appState.inprocessProfile = {
+                ...appState.inprocessProfile,
+                stations: entry.stations
+            };
+        }
         appState.inprocessMessage = 'Station complete.';
         renderCurrentView();
     } catch (error) {
@@ -2027,24 +3188,9 @@ async function completeStation() {
 }
 
 function openFlagModal() {
+    // Deprecated modal; flag is now taken from the inline comment box.
     if (!getActiveRosterEntry() || !appState.inprocessStation) return;
-    const modalContent = `
-        <form id="flagForm" onsubmit="saveFlag(event)">
-            <div class="form-row">
-                <label class="form-label">Flag Reason</label>
-                <textarea class="form-textarea" id="flagReason" required></textarea>
-            </div>
-            <div class="form-row">
-                <label class="form-label">Owner (Optional)</label>
-                <input type="text" class="form-input" id="flagOwner" placeholder="Assigned to">
-            </div>
-        </form>
-    `;
-    const modalFooter = `
-        <button class="btn btn-blue" onclick="document.getElementById('flagForm').requestSubmit()">SAVE FLAG</button>
-        <button class="btn btn-outline" onclick="closeModal()">CANCEL</button>
-    `;
-    showModal(createModal('ADD FLAG', modalContent, modalFooter));
+    saveFlagFromComment();
 }
 
 async function resetInprocessingForActive() {
@@ -2071,7 +3217,8 @@ async function resetInprocessingForActive() {
 }
 
 async function saveFlag(e) {
-    e.preventDefault();
+    if (e) e.preventDefault();
+    // Kept for backward compatibility; prefer saveFlagFromComment
     const entry = getActiveRosterEntry();
     if (!entry || !appState.inprocessStation) return;
     const reason = document.getElementById('flagReason').value.trim();
@@ -2099,6 +3246,83 @@ async function saveFlag(e) {
     } catch (error) {
         console.error('Save flag failed:', error);
         alert('Failed to save flag.');
+    } finally {
+        hideLoading();
+    }
+}
+
+async function saveFlagFromComment() {
+    const entry = getActiveRosterEntry();
+    if (!entry || !appState.inprocessStation) return;
+    const commentEl = document.getElementById('stationComment');
+    const reason = commentEl ? commentEl.value.trim() : '';
+    if (!reason) {
+        alert('Add a comment before flagging.');
+        return;
+    }
+    const actor = getCurrentUser();
+    entry.flags = entry.flags || [];
+    entry.flags.push({
+        station: appState.inprocessStation,
+        reason,
+        owner: '',
+        created_at: new Date().toISOString(),
+        created_by: actor ? actor.cap_id : '',
+        resolved: false
+    });
+    entry.stations = entry.stations || buildDefaultStations();
+    entry.stations[appState.inprocessStation] = entry.stations[appState.inprocessStation] || { status: 'pending', flagged: false };
+    entry.stations[appState.inprocessStation].comment = reason;
+    entry.stations[appState.inprocessStation].flagged = true;
+    showLoading();
+    try {
+        await updateRosterEntry(entry);
+        appState.roster = await getRoster(appState.selectedEvent.id);
+        if (appState.inprocessProfile) {
+            appState.inprocessProfile = {
+                ...appState.inprocessProfile,
+                stations: entry.stations,
+                flags: entry.flags
+            };
+        }
+        renderCurrentView();
+    } catch (error) {
+        console.error('Save flag failed:', error);
+        alert('Failed to save flag.');
+    } finally {
+        hideLoading();
+    }
+}
+
+async function resolveFlagInline(index) {
+    const entry = getActiveRosterEntry();
+    if (!entry || !entry.flags || !entry.flags[index]) return;
+    const actor = getCurrentUser();
+    entry.flags[index].resolved = true;
+    entry.flags[index].resolved_at = new Date().toISOString();
+    entry.flags[index].resolved_by = actor ? actor.cap_id : '';
+    const station = entry.flags[index].station;
+    // clear station flagged if no remaining open flags for that station
+    const stillOpen = entry.flags.some((f, i) => i !== index && !f.resolved && f.station === station);
+    entry.stations = entry.stations || buildDefaultStations();
+    if (!stillOpen && entry.stations[station]) {
+        entry.stations[station].flagged = false;
+    }
+    showLoading();
+    try {
+        await updateRosterEntry(entry);
+        appState.roster = await getRoster(appState.selectedEvent.id);
+        if (appState.inprocessProfile) {
+            appState.inprocessProfile = {
+                ...appState.inprocessProfile,
+                stations: entry.stations,
+                flags: entry.flags
+            };
+        }
+        renderCurrentView();
+    } catch (error) {
+        console.error('Resolve flag failed:', error);
+        alert('Failed to resolve flag.');
     } finally {
         hideLoading();
     }
@@ -2160,11 +3384,12 @@ async function signOutInprocessing() {
         alert('Select an event first.');
         return;
     }
-    if (!appState.inprocessProfile) {
+    const profile = appState.outprocessProfile || appState.inprocessProfile;
+    if (!profile) {
         alert('Lookup a CAP ID first.');
         return;
     }
-    const capId = normalizeCapId(appState.inprocessProfile.capId);
+    const capId = normalizeCapId(profile.capId);
     if (!capId) {
         alert('Invalid CAP ID.');
         return;
@@ -2179,6 +3404,8 @@ async function signOutInprocessing() {
         entry.signed_out_at = new Date().toISOString();
         await updateRosterEntry(entry);
         appState.roster = await getRoster(appState.selectedEvent.id);
+        appState.outprocessProfile = null;
+        appState.inprocessProfile = null;
         renderCurrentView();
         alert('Signed out.');
     } catch (error) {
@@ -2238,79 +3465,10 @@ function mapInprocessingRow(row) {
     };
 }
 
-function renderInprocessingProfile(profile) {
+function renderInprocessingProfile(profile, accommodations = [], allergies = []) {
     const fullName = `${profile.firstName || ''} ${profile.lastName || ''}`.trim();
-    const paid = String(profile.paidInFull || '').toLowerCase();
-    const paidLabel = paid === 'yes' || paid === 'true' || paid === 'paid' ? 'Yes' : (paid ? profile.paidInFull : 'No');
-    return `
-        <div class="profile-section">
-            <div class="resource-header status-blue">PROFILE</div>
-            <div class="profile-grid">
-                <div class="profile-field">
-                    <div class="profile-label">Name</div>
-                    <div class="profile-value">${fullName || 'N/A'}</div>
-                </div>
-                <div class="profile-field">
-                    <div class="profile-label">CAP ID</div>
-                    <div class="profile-value">${profile.capId || 'N/A'}</div>
-                </div>
-                <div class="profile-field">
-                    <div class="profile-label">Rank</div>
-                    <div class="profile-value">${profile.rank || 'N/A'}</div>
-                </div>
-                <div class="profile-field">
-                    <div class="profile-label">Member Status</div>
-                    <div class="profile-value">${profile.memberStatus || 'N/A'}</div>
-                </div>
-                <div class="profile-field">
-                    <div class="profile-label">Membership Expiration</div>
-                    <div class="profile-value">${profile.membershipExpiration || 'N/A'}</div>
-                </div>
-                <div class="profile-field">
-                    <div class="profile-label">Paid</div>
-                    <div class="profile-value">${paidLabel}</div>
-                </div>
-                <div class="profile-field">
-                    <div class="profile-label">Shirt Size</div>
-                    <div class="profile-value">${profile.shirtSize || 'N/A'}</div>
-                </div>
-                <div class="profile-field">
-                    <div class="profile-label">Emergency Contact</div>
-                    <div class="profile-value">${profile.emergencyName || 'N/A'} ${profile.emergencyPhone ? `• ${profile.emergencyPhone}` : ''}</div>
-                </div>
-            </div>
-        </div>
-        <div class="profile-section">
-            <div class="resource-header status-blue">ACCOMMODATIONS</div>
-            <div class="profile-grid">
-                <div class="profile-field">
-                    <div class="profile-label">Status</div>
-                    <div class="profile-value">Not connected yet.</div>
-                </div>
-            </div>
-        </div>
-        <div class="profile-section">
-            <div class="resource-header status-blue">ALLERGIES</div>
-            <div class="profile-grid">
-                <div class="profile-field">
-                    <div class="profile-label">Status</div>
-                    <div class="profile-value">Not connected yet.</div>
-                </div>
-            </div>
-        </div>
-    `;
-}
-
-// Override with event-profile aware renderer
-function renderInprocessingProfile(profile) {
-    const fullName = profile.name || profile.full_name || `${profile.firstName || ''} ${profile.lastName || ''}`.trim();
-    const accommodations = profile.accommodations || [];
-    const allergies = profile.allergies || [];
-    const fmtYes = (v) => {
-        const s = String(v || '').toLowerCase();
-        if (!s) return 'No';
-        return ['y', 'yes', 'true', 't', '1', 'x'].some(k => s.includes(k)) ? 'Yes' : s;
-    };
+    const fmtYes = (val) => (String(val || '').toLowerCase() === 'yes' ? 'Yes' : 'No');
+    
     return `
         <div class="profile-section">
             <div class="resource-header status-blue">PROFILE</div>
@@ -2318,32 +3476,31 @@ function renderInprocessingProfile(profile) {
                 <div class="profile-field"><div class="profile-label">Name</div><div class="profile-value">${fullName || 'N/A'}</div></div>
                 <div class="profile-field"><div class="profile-label">CAP ID</div><div class="profile-value">${profile.capId || 'N/A'}</div></div>
                 <div class="profile-field"><div class="profile-label">Rank</div><div class="profile-value">${profile.rank || 'N/A'}</div></div>
-                <div class="profile-field"><div class="profile-label">Member Type</div><div class="profile-value">${profile.memberType || 'N/A'}</div></div>
+                <div class="profile-field"><div class="profile-label">Member Type</div><div class="profile-value">${profile.member_type || 'N/A'}</div></div>
                 <div class="profile-field"><div class="profile-label">Status</div><div class="profile-value">${profile.memberStatus || 'N/A'}</div></div>
                 <div class="profile-field"><div class="profile-label">Membership Expires</div><div class="profile-value">${profile.membershipExpiration || 'N/A'}</div></div>
                 <div class="profile-field"><div class="profile-label">Shirt Size</div><div class="profile-value">${profile.shirtSize || 'N/A'}</div></div>
                 <div class="profile-field"><div class="profile-label">Cell Phone</div><div class="profile-value">${profile.cellPhone || 'N/A'}</div></div>
-                <div class="profile-field"><div class="profile-label">Home Phone</div><div class="profile-value">${profile.homePhone || 'N/A'}</div></div>
                 <div class="profile-field"><div class="profile-label">Emergency Contact</div><div class="profile-value">${profile.emergencyContact || 'N/A'}</div></div>
                 <div class="profile-field"><div class="profile-label">Emergency Phone</div><div class="profile-value">${profile.emergencyPhone || 'N/A'}</div></div>
-                <div class="profile-field"><div class="profile-label">Email</div><div class="profile-value">${profile.email || 'N/A'}</div></div>
             </div>
         </div>
+
         <div class="profile-section">
             <div class="resource-header status-blue">ACCOMMODATIONS</div>
-            ${accommodations.length ? `<div class="profile-grid">
+            ${accommodations && accommodations.length ? `
                 ${accommodations.map(a => `
-                    <div class="profile-field"><div class="profile-label">Type</div><div class="profile-value">${a.accommodation_type || 'N/A'}</div></div>
-                    <div class="profile-field"><div class="profile-label">Temporary</div><div class="profile-value">${a.temporary || 'N/A'}</div></div>
-                    <div class="profile-field"><div class="profile-label">Start Date</div><div class="profile-value">${a.start_date || 'N/A'}</div></div>
-                    <div class="profile-field"><div class="profile-label">End Date</div><div class="profile-value">${a.end_date || 'N/A'}</div></div>
-                    <div class="profile-field"><div class="profile-label">Details</div><div class="profile-value">${a.description || 'N/A'}</div></div>
+                    <div class="profile-grid">
+                        <div class="profile-field"><div class="profile-label">Type</div><div class="profile-value">${a.accommodation_type || 'N/A'}</div></div>
+                        <div class="profile-field"><div class="profile-label">Details</div><div class="profile-value">${a.description || 'N/A'}</div></div>
+                    </div>
                 `).join('')}
-            </div>` : '<div class="resource-details">No accommodations on file.</div>'}
+            ` : '<div class="resource-details">No accommodations on file.</div>'}
         </div>
+
         <div class="profile-section">
             <div class="resource-header status-blue">ALLERGIES</div>
-            ${allergies.length ? `
+            ${allergies && allergies.length ? `
                 ${allergies.map((a, idx) => `
                     <div class="card" style="margin-bottom:10px;">
                         <div class="resource-name">Allergy ${idx + 1}: ${a.allergy_name || 'N/A'}</div>
@@ -2360,6 +3517,16 @@ function renderInprocessingProfile(profile) {
                     </div>
                 `).join('')}
             ` : '<div class="resource-details">No allergies on file.</div>'}
+        </div>
+
+        <div class="profile-section">
+            <div class="resource-header status-blue">BILLETING ASSIGNMENT</div>
+            <div class="profile-grid" id="billetingSummary">
+                <div class="profile-field">
+                    <div class="profile-label">Status</div>
+                    <div class="profile-value">Loading...</div>
+                </div>
+            </div>
         </div>
     `;
 }
@@ -2384,7 +3551,10 @@ async function selectEvent(eventId, targetView = 'dashboard') {
         appState.selectedEvent = event;
         localStorage.setItem('cap-event-selected-event-id', eventId);
         appState.currentView = targetView;
+        persistCurrentView();
         appState.roster = await getRoster(eventId);
+        await loadBilletingDataForSelectedEvent();
+        await loadOrgChartDataForSelectedEvent();
         appState.selectedInprocessingEvent = eventId;
         updateContextUI();
         renderCurrentView();
@@ -2437,23 +3607,6 @@ function renderEventDetailView(event, activities) {
                     <div class="metric-value status-blue">${totals.assignedAssets} / ${totals.requiredAssets}</div>
                 </div>
             </div>
-        </div>
-
-        <div class="flex-between mb-4">
-            <h3 class="page-subtitle" style="font-size: 24px; font-family: 'Orbitron', monospace; color: var(--blue-secondary);">INPROCESSING STATIONS</h3>
-            ${isAdmin() ? `
-                <button class="btn btn-blue btn-small" onclick="openStationModal('${event.id}')">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <line x1="12" y1="5" x2="12" y2="19"></line>
-                        <line x1="5" y1="12" x2="19" y2="12"></line>
-                    </svg>
-                    ADD STATION
-                </button>
-            ` : ''}
-        </div>
-
-        <div class="resource-list mb-4" id="eventStationsList">
-            Loading stations...
         </div>
 
         <div class="flex-between mb-4">
@@ -2570,6 +3723,10 @@ function openEventModal(eventId = null) {
     `;
 
     showModal(createModal(event ? 'EDIT EVENT' : 'NEW EVENT', modalContent, modalFooter));
+}
+
+function openEventEdit(eventId) {
+    openEventModal(eventId);
 }
 
 async function saveEvent(e, eventId) {
@@ -2690,7 +3847,7 @@ function openActivityModal(eventId) {
                 <div class="tag-input-row">
                     <select class="form-select" id="activityAssetsRequiredSelect">
                         <option value="">Select asset...</option>
-                        ${appState.assets.map(a => `<option value="${a.id}">${a.name} (${a.type}) • ${a.details || 'ID N/A'}</option>`).join('')}
+                        ${appState.assets.map(a => `<option value="${a.id}">${a.name} (${a.type}) - ${a.details || 'ID N/A'}</option>`).join('')}
                     </select>
                     <button type="button" class="btn btn-outline btn-small" onclick="addAssetsRequiredTag()">Add</button>
                 </div>
@@ -2844,7 +4001,8 @@ function isActivityFullyAssigned(activity) {
 
 function getNonDriverAssignedCount(activity) {
     const entries = normalizeAssignmentEntries(activity.assigned_personnel || [], 'personnel');
-    return entries.filter(entry => !(entry.auto_driver || isVehicleOperatorRole(entry.role))).length;
+    // Count all personnel assignments (manual + auto-driver) toward staffing totals.
+    return entries.length;
 }
 
 function getEventActivityTotals(eventId, activities) {
@@ -2995,7 +4153,7 @@ function renderAvailabilityList(listEl, items, type) {
     }
     listEl.innerHTML = items.map((item, idx) => `
         <div class="availability-item">
-            <span>${item.label ? `${item.label} • ` : ''}${item.start_date}–${item.end_date} • ${item.start_time}–${item.end_time}</span>
+            <span>${item.label ? `${item.label} - ` : ''}${item.start_date}–${item.end_date} - ${item.start_time}–${item.end_time}</span>
             <button type="button" class="tag-chip-remove" onclick="removeAvailabilityEntry('${type}', ${idx})">×</button>
         </div>
     `).join('');
@@ -3017,7 +4175,7 @@ function isResourceAvailable(resource, activity) {
     const window = getAssignmentWindow(activity, {});
     if (!window) return true;
     const availability = getAvailabilityWindows(resource, activity.activity_date);
-    if (!availability.length) return false;
+    if (!availability.length) return true; // treat no availability as always available
     return availability.some(a => window.start >= a.start && window.end <= a.end);
 }
 
@@ -3128,7 +4286,7 @@ function getAssignedIds(list, type) {
 function normalizeAssignmentEntries(list, type) {
     return (list || []).map(entry => {
         if (typeof entry === 'string') {
-            return { id: String(entry), role: '', type: '', assignment_date: '', assignment_start_time: '', assignment_end_time: '', auto_driver: false, asset_id: '', from_location_id: '', to_location_id: '', stay_at_location: false };
+            return { id: String(entry), role: '', type: '', assignment_date: '', assignment_start_time: '', assignment_end_time: '', auto_driver: false, asset_id: '', operator_id: '', from_location_id: '', to_location_id: '', stay_at_location: false };
         }
         const id = type === 'personnel'
             ? (entry.personnel_id != null ? entry.personnel_id : entry.id)
@@ -3142,6 +4300,7 @@ function normalizeAssignmentEntries(list, type) {
             assignment_end_time: entry.assignment_end_time || '',
             auto_driver: entry.auto_driver || false,
             asset_id: entry.asset_id || '',
+            operator_id: entry.operator_id || '',
             from_location_id: entry.from_location_id || '',
             to_location_id: entry.to_location_id || '',
             stay_at_location: entry.stay_at_location || false
@@ -3219,7 +4378,7 @@ function formatActivityDateTime(activity) {
     const date = parseDateLocal(activity.activity_date);
     const dateStr = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
     if (!activity.start_time || !activity.end_time) return dateStr;
-    return `${dateStr} • ${activity.start_time}–${activity.end_time}`;
+    return `${dateStr} - ${activity.start_time}–${activity.end_time}`;
 }
 
 function formatLocationLabel(location) {
@@ -3516,23 +4675,27 @@ function openActivityDetail(activityId, options = {}) {
         const person = appState.personnel.find(p => p.id === entry.id);
         const label = person ? `${person.name} (CAP ${person.cap_id})` : entry.id;
         const time = entry.assignment_start_time && entry.assignment_end_time ? ` (${entry.assignment_start_time}-${entry.assignment_end_time})` : '';
-        return { id: entry.id, label: entry.role ? `${label} — ${entry.role}${time}` : `${label}${time}`, index };
+        const asset = entry.asset_id ? appState.assets.find(a => String(a.id) === String(entry.asset_id)) : null;
+        const assetText = asset ? ` - Asset: ${asset.name}` : '';
+        const roleText = entry.role ? ` - ${entry.role}` : '';
+        return { id: entry.id, label: `${label}${roleText}${assetText}${time}`, index };
     });
     const assignedAssets = assignedAssetsEntries.map((entry, index) => {
         const asset = appState.assets.find(a => a.id === entry.id);
         const label = asset ? `${asset.name} (${asset.type})` : entry.id;
         const time = entry.assignment_start_time && entry.assignment_end_time ? ` (${entry.assignment_start_time}-${entry.assignment_end_time})` : '';
-        return { id: entry.id, label: entry.type ? `${label} — ${entry.type}${time}` : `${label}${time}`, index };
+        const operator = entry.operator_id ? appState.personnel.find(p => String(p.id) === String(entry.operator_id)) : null;
+        const opText = operator ? ` - Operator: ${operator.name}` : '';
+        return { id: entry.id, label: entry.type ? `${label} - ${entry.type}${time}${opText}` : `${label}${time}${opText}`, index };
     });
 
-    const availablePersonnel = appState.personnel.filter(p => {
-        if (!isResourceAvailable(p, activity)) return false;
-        return !isDriverAssignedToVehicle(p.id, activity);
-    });
-    const availableAssets = appState.assets.filter(a => {
-        if (!isResourceAvailable(a, activity)) return false;
-        return assetHasDriverOnDate(a, activity);
-    });
+    // Show all personnel/assets so users can assign freely; availability conflicts will warn later.
+    const availablePersonnel = [...appState.personnel];
+    const availableAssets = [...appState.assets];
+    const roleOptions = Array.from(new Set([
+        ...getSupportRoles(),
+        ...assignedPersonnelEntries.map(r => r.role).filter(r => r)
+    ]));
 
     const supportRequiredSection = readOnly ? `
         <div class="form-row">
@@ -3566,7 +4729,7 @@ function openActivityDetail(activityId, options = {}) {
                 <div class="tag-input-row">
                     <select class="form-select" id="activityEditAssetSelect">
                         <option value="">Select asset...</option>
-                        ${appState.assets.map(a => `<option value="${a.id}">${a.name} (${a.type}) • ${a.details || 'ID N/A'}</option>`).join('')}
+                        ${appState.assets.map(a => `<option value="${a.id}">${a.name} (${a.type}) - ${a.details || 'ID N/A'}</option>`).join('')}
                     </select>
                     <button type="button" class="btn btn-outline btn-small" onclick="addAssetRequiredEdit()">Add</button>
                 </div>
@@ -3618,7 +4781,11 @@ function openActivityDetail(activityId, options = {}) {
                     </select>
                     <select class="form-select" id="assignPersonnelRole">
                         <option value="">Select role...</option>
-                        ${buildRoleOptions(activity.support_personnel_required, activity.assigned_personnel, 'personnel')}
+                        ${roleOptions.map(r => `<option value="${r}">${r}</option>`).join('')}
+                    </select>
+                    <select class="form-select" id="assignPersonnelAssetSelect">
+                        <option value="">(No asset)</option>
+                        ${availableAssets.map(a => `<option value="${a.id}">${a.name}</option>`).join('')}
                     </select>
                     <div class="tag-input-row">
                         <input type="time" class="form-input" id="assignPersonnelStartTime" placeholder="Start">
@@ -3626,8 +4793,8 @@ function openActivityDetail(activityId, options = {}) {
                         <button type="button" class="btn btn-outline btn-small" onclick="assignPersonnelToActivityAction('${activityId}')">Assign</button>
                     </div>
                     <label class="form-label" style="margin: 0; display:flex; align-items:center; gap:8px;">
-                        <input type="checkbox" id="assignPersonnelUseActivityTime" onchange="toggleAssignPersonnelActivityTime('${activityId}')">
-                        Use activity time
+                        <input type="checkbox" id="assignPersonnelFullEvent" onchange="toggleAssignPersonnelFullEvent('${activityId}')">
+                        Full event
                     </label>
                 </div>
             </div>
@@ -3636,14 +4803,12 @@ function openActivityDetail(activityId, options = {}) {
                 <div class="resource-list">
                     ${assignedPersonnel.length ? assignedPersonnel.map((entry) => {
                         const id = entry.id;
-                        const isDriver = entry.label.includes('— Driver');
                         return `
                             <div class="resource-item">
                                 <div class="flex-between">
                                     <div class="resource-name">${entry.label}</div>
                                     <div class="flex gap-2">
-                                        <button class="btn btn-small btn-outline" onclick="openAssignmentRouteModal('personnel', '${activityId}', ${entry.index})">Route</button>
-                                        ${isDriver ? '' : `<button class="btn btn-small btn-outline" onclick="unassignPersonnelAction('${activityId}', '${id}')">Unassign</button>`}
+                                        <button class="btn btn-small btn-outline" onclick="unassignPersonnelAction('${activityId}', '${id}')">Remove</button>
                                     </div>
                                 </div>
                             </div>
@@ -3652,24 +4817,6 @@ function openActivityDetail(activityId, options = {}) {
                 </div>
             </div>
 
-            <div class="form-row">
-                <label class="form-label">Assign Asset</label>
-                <div class="tag-input-row stack-sm">
-                    <select class="form-select" id="assignAssetSelect">
-                        <option value="">Select asset...</option>
-                        ${availableAssets.map(a => `<option value="${a.id}">${a.name} (${a.type}) • ${a.details || 'ID N/A'}</option>`).join('')}
-                    </select>
-                    <div class="tag-input-row">
-                        <input type="time" class="form-input" id="assignAssetStartTime" placeholder="Start">
-                        <input type="time" class="form-input" id="assignAssetEndTime" placeholder="End">
-                        <button type="button" class="btn btn-outline btn-small" onclick="assignAssetToActivityAction('${activityId}')">Assign</button>
-                    </div>
-                    <label class="form-label" style="margin: 0; display:flex; align-items:center; gap:8px;">
-                        <input type="checkbox" id="assignAssetUseActivityTime" onchange="toggleAssignAssetActivityTime('${activityId}')">
-                        Use activity time
-                    </label>
-                </div>
-            </div>
             <div class="form-row">
                 <label class="form-label">Assigned Assets</label>
                 <div class="resource-list">
@@ -3680,8 +4827,7 @@ function openActivityDetail(activityId, options = {}) {
                                 <div class="flex-between">
                                     <div class="resource-name">${entry.label}</div>
                                     <div class="flex gap-2">
-                                        <button class="btn btn-small btn-outline" onclick="openAssignmentRouteModal('assets', '${activityId}', ${entry.index})">Route</button>
-                                        <button class="btn btn-small btn-outline" onclick="unassignAssetAction('${activityId}', '${id}')">Unassign</button>
+                                        <button class="btn btn-small btn-outline" onclick="unassignAssetAction('${activityId}', '${id}')">Remove</button>
                                     </div>
                                 </div>
                             </div>
@@ -3689,7 +4835,8 @@ function openActivityDetail(activityId, options = {}) {
                     }).join('') : '<div class="empty-state-text text-center">No assets assigned</div>'}
                 </div>
             </div>
-        ` : ''}
+
+            ` : ''}
     `;
 
     const modalFooter = `
@@ -3704,6 +4851,7 @@ function openActivityDetail(activityId, options = {}) {
 }
 
 async function saveActivityDetails(activityId) {
+    const currentActivity = appState.activities.find(a => a.id === activityId) || {};
     const updates = {
         title: document.getElementById('activityEditTitle').value,
         description: document.getElementById('activityEditDescription').value,
@@ -3712,7 +4860,9 @@ async function saveActivityDetails(activityId) {
         start_time: document.getElementById('activityEditStartTime').value || null,
         end_time: document.getElementById('activityEditEndTime').value || null,
         support_personnel_required: JSON.parse(document.getElementById('activityEditSupportHidden').value || '[]'),
-        assets_required: JSON.parse(document.getElementById('activityEditAssetHidden').value || '[]')
+        assets_required: JSON.parse(document.getElementById('activityEditAssetHidden').value || '[]'),
+        assigned_personnel: currentActivity.assigned_personnel || [],
+        assigned_assets: currentActivity.assigned_assets || []
     };
 
     showLoading();
@@ -3779,73 +4929,123 @@ function addAssetRequiredEdit() {
 async function assignPersonnelToActivityAction(activityId) {
     const select = document.getElementById('assignPersonnelSelect');
     const roleSelect = document.getElementById('assignPersonnelRole');
+    const assetSelect = document.getElementById('assignPersonnelAssetSelect');
     const startInput = document.getElementById('assignPersonnelStartTime');
     const endInput = document.getElementById('assignPersonnelEndTime');
     const useActivityTime = document.getElementById('assignPersonnelUseActivityTime');
+    const fullEvent = document.getElementById('assignPersonnelFullEvent')?.checked;
     const activity = appState.activities.find(a => a.id === activityId);
     if (!select || !select.value) {
         alert('Select a staff member.');
         return;
     }
-    if (!roleSelect || !roleSelect.value) {
-        alert('Select a role.');
+    // Minimal validation: person required
+    if (!select || !select.value) {
+        alert('Select a staff member.');
         return;
     }
-    if (useActivityTime && useActivityTime.checked && activity) {
-        startInput.value = activity.start_time || '';
-        endInput.value = activity.end_time || '';
-    }
-    if (!startInput || !endInput || !startInput.value || !endInput.value) {
-        alert('Select a start and end time.');
-        return;
-    }
-
     const personId = String(select.value);
-    const alreadyAssigned = getAssignedIds(activity ? activity.assigned_personnel : [], 'personnel')
-        .includes(personId);
-    if (alreadyAssigned) {
-        alert('This staff member is already assigned to this activity.');
-        return;
-    }
-
-    const conflicts = hasTimeConflict(activityId, 'personnel', select.value, null, {
-        assignment_start_time: startInput.value,
-        assignment_end_time: endInput.value
+    const assetId = assetSelect ? assetSelect.value : '';
+    // No blocking validations; only console warnings
+    console.debug('Assign clicked', {
+        personId,
+        role: roleSelect?.value || '',
+        assetId,
+        start: startInput?.value || '',
+        end: endInput?.value || ''
     });
-    if (conflicts.length) {
-        const list = conflicts.map(a => a.title).join(', ');
-        const ok = confirm(`This operator is scheduled at another activity (${list}) during this time.\n\nAre they going directly from the other activity to this one?`);
-        if (!ok) return;
-    }
-
-    if (activity) {
-        const resource = appState.personnel.find(p => String(p.id) === personId);
-        const window = getAssignmentWindow(activity, { assignment_start_time: startInput.value, assignment_end_time: endInput.value });
-        if (resource && window) {
-            const availability = getAvailabilityWindows(resource, activity.activity_date);
-            const within = availability.some(a => window.start >= a.start && window.end <= a.end);
-            if (!within) {
-                alert('This staff member is not available during this time.');
-                return;
-            }
-        }
-    }
     showLoading();
     try {
-        const added = await assignPersonnelToActivity(select.value, activityId, roleSelect.value, null, startInput.value, endInput.value, false, '');
-        if (!added) {
-            alert('This staff member is already assigned to this activity.');
-            return;
+        // Force persist personnel assignment directly
+        const act = appState.activities.find(a => a.id === activityId) || {};
+        const activityStart = act.start_time || '06:00';
+        const activityEnd = act.end_time || '23:30';
+        const startVal = fullEvent ? activityStart : (startInput?.value || '');
+        const endVal = fullEvent ? activityEnd : (endInput?.value || '');
+        if (fullEvent) {
+            if (startInput) startInput.value = startVal;
+            if (endInput) endInput.value = endVal;
         }
-        await loadAllData();
-        const refreshed = appState.activities.find(a => a.id === activityId);
-        if (refreshed) {
-            const assignedIds = getAssignedIds(refreshed.assigned_personnel || [], 'personnel');
-            if (!assignedIds.includes(personId)) {
-                alert('Assignment did not persist. Check availability/driver filters or try again.');
-                return;
+        const personnelEntries = normalizeAssignmentEntries(act.assigned_personnel || [], 'personnel');
+        personnelEntries.push({
+            id: personId,
+            role: roleSelect.value || '',
+            assignment_date: act?.activity_date || '',
+            assignment_start_time: startVal,
+            assignment_end_time: endVal,
+            auto_driver: false,
+            asset_id: assetId || '',
+            operator_id: '',
+            from_location_id: '',
+            to_location_id: '',
+            stay_at_location: false
+        });
+        console.log('Assign personnel -> updateActivity', {
+            activityId,
+            personId,
+            role: roleSelect.value,
+            start: startInput?.value || '',
+            end: endInput?.value || '',
+            assetId: assetId || '',
+            beforePersonnel: act?.assigned_personnel,
+            afterPersonnel: personnelEntries
+        });
+        // Build asset assignments once so we can persist personnel + assets together.
+        const assetEntries = normalizeAssignmentEntries(act.assigned_assets || [], 'assets');
+        if (assetId) {
+            let updated = false;
+            for (const entry of assetEntries) {
+                if (String(entry.id) === String(assetId)) {
+                    entry.operator_id = personId;
+                    entry.assignment_start_time = startVal;
+                    entry.assignment_end_time = endVal;
+                    updated = true;
+                    break;
+                }
+            }
+            if (!updated) {
+                assetEntries.push({
+                    id: assetId,
+                    asset_id: assetId,
+                    operator_id: personId,
+                    assignment_date: act?.activity_date || '',
+                    assignment_start_time: startVal,
+                    assignment_end_time: endVal,
+                    role: '',
+                    type: '',
+                    auto_driver: false,
+                    from_location_id: '',
+                    to_location_id: '',
+                    stay_at_location: false
+                });
             }
         }
+        console.log('Assign operator -> updateActivity', {
+            activityId,
+            assetId,
+            operatorId: personId,
+            start: startInput?.value || '',
+            end: endInput?.value || '',
+            beforeAssets: act?.assigned_assets,
+            afterAssets: assetEntries
+        });
+        await updateActivity(activityId, { assigned_personnel: personnelEntries, assigned_assets: assetEntries });
+        const verify = await supabaseClient
+            .from('activities')
+            .select('assigned_personnel, assigned_assets')
+            .eq('id', activityId)
+            .single();
+        console.log('VERIFY DATABASE AFTER UPDATE:', {
+            sent: { assigned_personnel: personnelEntries, assigned_assets: assetEntries },
+            received: verify.data
+        });
+        await loadAllData();
+        const finalAct = appState.activities.find(a => a.id === activityId);
+        console.log('After assignment reload', {
+            activityId,
+            assigned_personnel: finalAct?.assigned_personnel,
+            assigned_assets: finalAct?.assigned_assets
+        });
         renderCurrentView();
         closeModal();
         openActivityDetail(activityId);
@@ -3859,17 +5059,28 @@ async function assignPersonnelToActivityAction(activityId) {
 
 function toggleAssignPersonnelActivityTime(activityId) {
     const activity = appState.activities.find(a => a.id === activityId);
-    const checkbox = document.getElementById('assignPersonnelUseActivityTime');
+    const useActivity = document.getElementById('assignPersonnelUseActivityTime');
+    const fullEvent = document.getElementById('assignPersonnelFullEvent');
     const startInput = document.getElementById('assignPersonnelStartTime');
     const endInput = document.getElementById('assignPersonnelEndTime');
-    if (!checkbox || !startInput || !endInput) return;
-    if (!checkbox.checked) {
+    if (!startInput || !endInput) return;
+
+    if (fullEvent && fullEvent.checked) {
+        startInput.value = '';
+        endInput.value = '';
+        startInput.disabled = true;
+        endInput.disabled = true;
+        if (useActivity) useActivity.checked = false;
+        return;
+    }
+
+    if (!useActivity || !useActivity.checked) {
         startInput.disabled = false;
         endInput.disabled = false;
         return;
     }
     if (!activity || !activity.start_time || !activity.end_time) {
-        checkbox.checked = false;
+        useActivity.checked = false;
         alert('Set the activity start/end time first.');
         return;
     }
@@ -3879,13 +5090,39 @@ function toggleAssignPersonnelActivityTime(activityId) {
     endInput.disabled = true;
 }
 
+function toggleAssignPersonnelFullEvent(activityId) {
+    const activity = appState.activities.find(a => a.id === activityId) || {};
+    const fullEvent = document.getElementById('assignPersonnelFullEvent');
+    const startInput = document.getElementById('assignPersonnelStartTime');
+    const endInput = document.getElementById('assignPersonnelEndTime');
+    const defaultStart = activity.start_time || '06:00';
+    const defaultEnd = activity.end_time || '23:30';
+    if (!startInput || !endInput || !fullEvent) return;
+    if (fullEvent.checked) {
+        startInput.value = defaultStart;
+        endInput.value = defaultEnd;
+    } else {
+        startInput.value = '';
+        endInput.value = '';
+    }
+}
+
 function toggleAssignAssetActivityTime(activityId) {
     const activity = appState.activities.find(a => a.id === activityId);
     const checkbox = document.getElementById('assignAssetUseActivityTime');
+    const fullEvent = document.getElementById('assignAssetFullEvent');
     const startInput = document.getElementById('assignAssetStartTime');
     const endInput = document.getElementById('assignAssetEndTime');
-    if (!checkbox || !startInput || !endInput) return;
-    if (!checkbox.checked) {
+    if (!startInput || !endInput) return;
+    if (fullEvent && fullEvent.checked) {
+        startInput.value = '';
+        endInput.value = '';
+        startInput.disabled = true;
+        endInput.disabled = true;
+        if (checkbox) checkbox.checked = false;
+        return;
+    }
+    if (!checkbox || !checkbox.checked) {
         startInput.disabled = false;
         endInput.disabled = false;
         return;
@@ -3930,33 +5167,9 @@ async function assignAssetToActivityAction(activityId) {
         return;
     }
 
-    const conflicts = hasTimeConflict(activityId, 'assets', select.value, null, {
-        assignment_start_time: startInput.value,
-        assignment_end_time: endInput.value
-    });
-    if (conflicts.length) {
-        const list = conflicts.map(a => a.title).join(', ');
-        const ok = confirm(`This asset is scheduled at another activity (${list}) during this time.\n\nIs it going directly from the other activity to this one?`);
-        if (!ok) return;
-    }
-
-    if (activity) {
-        const resource = appState.assets.find(a => String(a.id) === assetId);
-        const window = getAssignmentWindow(activity, { assignment_start_time: startInput.value, assignment_end_time: endInput.value });
-        if (resource && window) {
-            const availability = getAvailabilityWindows(resource, activity.activity_date);
-            const within = availability.some(a => window.start >= a.start && window.end <= a.end);
-            if (!within) {
-                alert('This asset is not available during this time.');
-                return;
-            }
-        }
-        const driver = getAssetDriverForWindow(assetId, activity.activity_date, startInput.value, endInput.value);
-        if (!driver) {
-            alert('This vehicle must have an operator assigned for this time window.');
-            return;
-        }
-    }
+    // asset assignment flow deprecated in favor of person+asset single-step
+    alert('Use the personnel assignment to attach assets and operators.');
+    return;
     showLoading();
     try {
         await assignAssetToActivity(select.value, activityId, '', null, startInput.value, endInput.value);
@@ -4051,6 +5264,12 @@ function openAssetModal(assetId = null) {
             </div>
             <div class="form-row">
                 <label class="form-label">Availability (Date Range + Time)</label>
+                <div class="form-row" style="margin-top:6px;">
+                    <label class="form-label" style="display:flex; align-items:center; gap:8px;">
+                        <input type="checkbox" id="assetAvailFullEvent" onchange="fillAssetFullEvent()">
+                        Full event availability
+                    </label>
+                </div>
                 <div class="availability-row">
                     <div class="availability-field">
                         <label class="form-label-small">Label</label>
@@ -4089,7 +5308,7 @@ function openAssetModal(assetId = null) {
                         return `
                             <div class="resource-item">
                                 <div class="flex-between">
-                                    <div class="resource-name">${label} — ${entry.role || 'Driver'}${time}</div>
+                                    <div class="resource-name">${label} - ${entry.role || 'Driver'}${time}</div>
                                     <button class="btn btn-small btn-outline" onclick="unassignDriverFromAsset('${assetId}', '${entry.id}')">Unassign</button>
                                 </div>
                             </div>
@@ -4105,11 +5324,93 @@ function openAssetModal(assetId = null) {
 
     const modalFooter = `
         <button class="btn btn-blue" onclick="document.getElementById('assetForm').requestSubmit()">SAVE</button>
+        ${asset ? `<button class="btn btn-outline" style="margin-left:8px;" onclick="deleteAssetAction('${assetId}')">DELETE</button>` : ''}
         <button class="btn btn-outline" onclick="closeModal()">CANCEL</button>
     `;
 
     showModal(createModal(asset ? 'EDIT ASSET' : 'NEW ASSET', modalContent, modalFooter));
     setupAvailabilityList('asset');
+}
+
+async function assignOperatorToAssetAction(activityId) {
+    const assetSelect = document.getElementById('assignOperatorAssetSelect');
+    const personSelect = document.getElementById('assignOperatorPersonnelSelect');
+    if (!assetSelect || !personSelect) return;
+    const assetId = assetSelect.value;
+    const personId = personSelect.value;
+    if (!assetId || !personId) return;
+    const activity = appState.activities.find(a => a.id === activityId);
+    if (!activity) return;
+    const entries = normalizeAssignmentEntries(activity.assigned_assets || [], 'assets');
+    const updated = entries.map(e => e.id === assetId ? { ...e, operator_id: personId } : e);
+    showLoading();
+    try {
+        await updateActivity(activityId, { assigned_assets: updated });
+        await loadAllData();
+        renderCurrentView();
+        openActivityDetail(activityId);
+    } catch (err) {
+        console.error('Failed to assign operator to asset:', err);
+        alert('Failed to assign operator to asset.');
+    } finally {
+        hideLoading();
+    }
+}
+
+function fillAssetFullEvent() {
+    const box = document.getElementById('assetAvailFullEvent');
+    const startDate = document.getElementById('assetAvailStartDate');
+    const endDate = document.getElementById('assetAvailEndDate');
+    const startTime = document.getElementById('assetAvailStart');
+    const endTime = document.getElementById('assetAvailEnd');
+    if (!box || !startDate || !endDate || !startTime || !endTime) return;
+    if (!box.checked) {
+        startDate.value = '';
+        endDate.value = '';
+        startTime.value = '';
+        endTime.value = '';
+        return;
+    }
+    const evt = appState.selectedEvent;
+    if (!evt || !evt.start_date || !evt.end_date) {
+        box.checked = false;
+        alert('Event dates are not set.');
+        return;
+    }
+    const start = (evt.start_date || '').split('T')[0] || '';
+    const end = (evt.end_date || '').split('T')[0] || '';
+    startDate.value = start;
+    endDate.value = end;
+    startTime.value = '06:00';
+    endTime.value = '23:30';
+}
+
+function fillPersonnelFullEvent() {
+    const box = document.getElementById('personnelAvailFullEvent');
+    const startDate = document.getElementById('personnelAvailStartDate');
+    const endDate = document.getElementById('personnelAvailEndDate');
+    const startTime = document.getElementById('personnelAvailStart');
+    const endTime = document.getElementById('personnelAvailEnd');
+    if (!box || !startDate || !endDate || !startTime || !endTime) return;
+    if (!box.checked) {
+        startDate.value = '';
+        endDate.value = '';
+        startTime.value = '';
+        endTime.value = '';
+        return;
+    }
+    const evt = appState.selectedEvent;
+    if (!evt || !evt.start_date || !evt.end_date) {
+        box.checked = false;
+        alert('Event dates are not set.');
+        return;
+    }
+    const start = (evt.start_date || '').split('T')[0] || '';
+    const end = (evt.end_date || '').split('T')[0] || '';
+    startDate.value = start;
+    endDate.value = end;
+    startTime.value = '06:00';
+    endTime.value = '23:30';
 }
 
 // ==================== LOCATION ACTIONS ====================
@@ -4157,8 +5458,8 @@ function openLocationModal(locationId = null) {
 async function saveLocation(e, locationId) {
     e.preventDefault();
     const gpsRaw = document.getElementById('locationGps').value.trim();
-    let lat = '';
-    let lng = '';
+    let lat = null;
+    let lng = null;
     if (gpsRaw) {
         const match = gpsRaw.split(',').map(s => s.trim());
         if (match.length >= 2) {
@@ -4183,8 +5484,8 @@ async function saveLocation(e, locationId) {
         city,
         state,
         zip,
-        lat: lat || '',
-        lng: lng || ''
+        lat: lat,
+        lng: lng
     };
 
     showLoading();
@@ -4199,7 +5500,7 @@ async function saveLocation(e, locationId) {
         renderCurrentView();
     } catch (error) {
         console.error('Failed to save location:', error);
-        alert('Failed to save location.');
+        alert('Failed to save location: ' + (error?.message || 'Unknown error'));
     } finally {
         hideLoading();
     }
@@ -4243,6 +5544,12 @@ function openAssignDriverModal(assetId) {
                 </select>
             </div>
             <div class="form-row">
+                <label class="form-label" style="display:flex; align-items:center; gap:8px;">
+                    <input type="checkbox" id="assignDriverFullEvent" onchange="toggleDriverFullEvent()">
+                    Full event (no specific times)
+                </label>
+            </div>
+            <div class="form-row">
                 <label class="form-label">Date</label>
                 <input type="date" class="form-input" id="assignDriverDate" required>
             </div>
@@ -4269,10 +5576,11 @@ async function saveDriverAssignment(e, assetId) {
     e.preventDefault();
     const driverId = document.getElementById('assignDriverSelect').value;
     const role = document.getElementById('assignDriverRole').value;
-    const date = document.getElementById('assignDriverDate').value;
-    const startTime = document.getElementById('assignDriverStartTime').value;
-    const endTime = document.getElementById('assignDriverEndTime').value;
-    if (!driverId || !role || !date || !startTime || !endTime) return;
+    const fullEvent = document.getElementById('assignDriverFullEvent')?.checked;
+    const date = fullEvent ? null : document.getElementById('assignDriverDate').value;
+    const startTime = fullEvent ? null : document.getElementById('assignDriverStartTime').value;
+    const endTime = fullEvent ? null : document.getElementById('assignDriverEndTime').value;
+    if (!driverId || !role || (!fullEvent && (!date || !startTime || !endTime))) return;
 
     const asset = appState.assets.find(a => a.id === assetId);
     if (!asset) return;
@@ -4284,7 +5592,7 @@ async function saveDriverAssignment(e, assetId) {
         alert('This person is already assigned to this vehicle.');
         return;
     }
-    const overlap = existingDrivers.some(entry => {
+    const overlap = fullEvent ? false : existingDrivers.some(entry => {
         if (!entry.assignment_start_time || !entry.assignment_end_time) return false;
         const start = new Date(`2000-01-01T${entry.assignment_start_time}`);
         const end = new Date(`2000-01-01T${entry.assignment_end_time}`);
@@ -4310,6 +5618,17 @@ async function saveDriverAssignment(e, assetId) {
     } finally {
         hideLoading();
     }
+}
+
+function toggleDriverFullEvent() {
+    const full = document.getElementById('assignDriverFullEvent')?.checked;
+    ['assignDriverDate','assignDriverStartTime','assignDriverEndTime'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) {
+            el.disabled = full;
+            if (full) el.value = '';
+        }
+    });
 }
 
 async function syncDriversForAsset(assetId) {
@@ -4528,6 +5847,14 @@ function openPersonnelModal(personnelId = null) {
     const modalContent = `
         <form id="personnelForm" onsubmit="savePersonnel(event, '${personnelId || ''}')">
             <div class="form-row">
+                <label class="form-label">Lookup Registration</label>
+                <div class="tag-input-row">
+                    <input type="text" class="form-input" id="personnelLookupCapId" placeholder="Enter CAP ID to auto-fill">
+                    <button type="button" class="btn btn-outline btn-small" onclick="lookupPersonnelFromRegistration()">Lookup</button>
+                </div>
+                <div class="resource-details" id="personnelLookupStatus"></div>
+            </div>
+            <div class="form-row">
                 <label class="form-label">Name</label>
                 <input type="text" class="form-input" id="personnelName" value="${person ? person.name : ''}" required>
             </div>
@@ -4545,6 +5872,12 @@ function openPersonnelModal(personnelId = null) {
             </div>
             <div class="form-row">
                 <label class="form-label">Availability (Date Range + Time)</label>
+                <div class="form-row" style="margin-top:6px;">
+                    <label class="form-label" style="display:flex; align-items:center; gap:8px;">
+                        <input type="checkbox" id="personnelAvailFullEvent" onchange="fillPersonnelFullEvent()">
+                        Full event availability
+                    </label>
+                </div>
                 <div class="availability-row">
                     <div class="availability-field">
                         <label class="form-label-small">Label</label>
@@ -4578,6 +5911,7 @@ function openPersonnelModal(personnelId = null) {
 
     const modalFooter = `
         <button class="btn btn-blue" onclick="document.getElementById('personnelForm').requestSubmit()">SAVE</button>
+        ${person ? `<button class="btn btn-outline" style="margin-left:8px;" onclick="deletePersonnelAction('${personnelId}')">DELETE</button>` : ''}
         <button class="btn btn-outline" onclick="closeModal()">CANCEL</button>
     `;
 
@@ -4616,6 +5950,38 @@ async function savePersonnel(e, personnelId) {
     }
 }
 
+async function lookupPersonnelFromRegistration() {
+    const capInput = document.getElementById('personnelLookupCapId');
+    const statusEl = document.getElementById('personnelLookupStatus');
+    if (!capInput) return;
+    const capId = normalizeCapId(capInput.value);
+    if (!capId) {
+        if (statusEl) statusEl.textContent = 'Enter a CAP ID.';
+        return;
+    }
+    if (!appState.selectedEvent) {
+        if (statusEl) statusEl.textContent = 'Select an event first.';
+        return;
+    }
+    if (statusEl) statusEl.textContent = 'Looking up...';
+    try {
+        const { roster } = await getEventProfile(appState.selectedEvent.id, capId);
+        if (!roster) {
+            if (statusEl) statusEl.textContent = 'Not found in registrations.';
+            return;
+        }
+        const name = roster.full_name || `${roster.name_first || ''} ${roster.name_last || ''}`.trim();
+        document.getElementById('personnelName').value = name || '';
+        document.getElementById('personnelCapId').value = roster.cap_id || '';
+        document.getElementById('personnelRank').value = roster.rank || '';
+        document.getElementById('personnelSpecialties').value = roster.member_type || '';
+        if (statusEl) statusEl.textContent = 'Filled from registration.';
+    } catch (err) {
+        console.error('Lookup failed', err);
+        if (statusEl) statusEl.textContent = 'Lookup failed.';
+    }
+}
+
 async function deletePersonnelAction(personnelId) {
     if (!confirm('Are you sure you want to delete this personnel record?')) {
         return;
@@ -4644,7 +6010,7 @@ function openAssignPersonnelModal(personnelId) {
                     <optgroup label="Activities">
                         ${appState.activities.map(a => `<option value="activity-${a.id}">${a.title}</option>`).join('')}
                     </optgroup>
-                    <optgroup label="Assets">
+                    <optgroup label="Assets & Vehicles">
                         ${appState.assets.map(a => `<option value="asset-${a.id}">${a.name} (${a.type})</option>`).join('')}
                     </optgroup>
                 </select>
@@ -4702,8 +6068,10 @@ async function unassignPersonnelAction(activityId, personnelId) {
         if (!activity) throw new Error('Activity not found');
 
         const updated = (activity.assigned_personnel || []).filter(entry => {
-            if (typeof entry === 'string') return entry !== personnelId;
-            return entry.personnel_id !== personnelId;
+            const entryId = typeof entry === 'string'
+                ? entry
+                : (entry.id || entry.personnel_id || '');
+            return String(entryId) !== String(personnelId);
         });
         await updateActivity(activityId, { assigned_personnel: updated });
 
@@ -4718,3 +6086,40 @@ async function unassignPersonnelAction(activityId, personnelId) {
         hideLoading();
     }
 }
+
+// Billeting summary loader
+async function renderBilletingSummaryData(capId) {
+    const container = document.getElementById('billetingSummary');
+    if (!container || !appState.selectedEvent) return;
+    try {
+        const asn = await getBilletingAssignment(appState.selectedEvent.id, capId);
+        if (asn) {
+            const resolved = asn.resolved_location || {};
+            appState.billetingByCap = appState.billetingByCap || {};
+            appState.billetingByCap[capId] = {
+                building: resolved.building || asn.billeting_bunks?.billeting_rooms?.billeting_floors?.billeting_buildings?.name || '',
+                floor: resolved.floor || asn.billeting_bunks?.billeting_rooms?.billeting_floors?.floor_number || '',
+                room: resolved.room || asn.billeting_bunks?.billeting_rooms?.room_number || '',
+                bunk: resolved.bunk || asn.billeting_bunks?.bunk_number || ''
+            };
+        }
+        const cached = appState.billetingByCap ? appState.billetingByCap[capId] : null;
+        if (cached) {
+            container.innerHTML = `
+                <div class="profile-field"><div class="profile-label">Building</div><div class="profile-value">${cached.building || 'N/A'}</div></div>
+                <div class="profile-field"><div class="profile-label">Floor</div><div class="profile-value">${cached.floor || 'N/A'}</div></div>
+                <div class="profile-field"><div class="profile-label">Room</div><div class="profile-value">${cached.room || 'N/A'}</div></div>
+                <div class="profile-field"><div class="profile-label">Bunk</div><div class="profile-value">${cached.bunk || 'N/A'}</div></div>
+            `;
+        } else {
+            container.innerHTML = '<div class="resource-details">Not assigned.</div>';
+        }
+        if (isPrivileged()) {
+            container.insertAdjacentHTML('beforeend', `<div style="margin-top:8px;"><button class="btn btn-outline btn-small" onclick="switchView('billeting')">Assign Billeting</button></div>`);
+        }
+    } catch (err) {
+        console.error('Billeting summary load failed', err);
+        container.innerHTML = '<div class="resource-details">Error loading billeting.</div>';
+    }
+}
+
