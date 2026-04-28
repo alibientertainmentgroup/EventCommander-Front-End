@@ -2413,6 +2413,8 @@ function lookupInprocessingCadet() {
                 memberType: roster.member_type,
                 memberStatus: roster.member_status,
                 membershipExpiration: roster.expiration,
+                unitApproved: roster.unit_approved || '',
+                parentApproved: roster.parent_approved || '',
                 shirtSize: roster.shirt_size,
                 cellPhone: roster.cell_phone,
                 homePhone: roster.home_phone,
@@ -3468,6 +3470,8 @@ function mapInprocessingRow(row) {
 function renderInprocessingProfile(profile, accommodations = [], allergies = []) {
     const fullName = `${profile.firstName || ''} ${profile.lastName || ''}`.trim();
     const fmtYes = (val) => (String(val || '').toLowerCase() === 'yes' ? 'Yes' : 'No');
+    const unitApproved = profile.unitApproved ?? profile.unit_approved ?? '';
+    const parentApproved = profile.parentApproved ?? profile.parent_approved ?? '';
     
     return `
         <div class="profile-section">
@@ -3476,9 +3480,11 @@ function renderInprocessingProfile(profile, accommodations = [], allergies = [])
                 <div class="profile-field"><div class="profile-label">Name</div><div class="profile-value">${fullName || 'N/A'}</div></div>
                 <div class="profile-field"><div class="profile-label">CAP ID</div><div class="profile-value">${profile.capId || 'N/A'}</div></div>
                 <div class="profile-field"><div class="profile-label">Rank</div><div class="profile-value">${profile.rank || 'N/A'}</div></div>
-                <div class="profile-field"><div class="profile-label">Member Type</div><div class="profile-value">${profile.member_type || 'N/A'}</div></div>
+                <div class="profile-field"><div class="profile-label">Member Type</div><div class="profile-value">${profile.memberType || profile.member_type || 'N/A'}</div></div>
                 <div class="profile-field"><div class="profile-label">Status</div><div class="profile-value">${profile.memberStatus || 'N/A'}</div></div>
                 <div class="profile-field"><div class="profile-label">Membership Expires</div><div class="profile-value">${profile.membershipExpiration || 'N/A'}</div></div>
+                <div class="profile-field"><div class="profile-label">Unit Approved</div><div class="profile-value">${unitApproved || 'N/A'}</div></div>
+                <div class="profile-field"><div class="profile-label">Parent Approved</div><div class="profile-value">${parentApproved || 'N/A'}</div></div>
                 <div class="profile-field"><div class="profile-label">Shirt Size</div><div class="profile-value">${profile.shirtSize || 'N/A'}</div></div>
                 <div class="profile-field"><div class="profile-label">Cell Phone</div><div class="profile-value">${profile.cellPhone || 'N/A'}</div></div>
                 <div class="profile-field"><div class="profile-label">Emergency Contact</div><div class="profile-value">${profile.emergencyContact || 'N/A'}</div></div>

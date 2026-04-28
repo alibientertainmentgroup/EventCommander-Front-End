@@ -1065,10 +1065,10 @@ function renderAdminPanel() {
     const signedIn = appState.roster.filter(r => !r.signed_out_at);
     const eventLabel = appState.selectedEvent ? appState.selectedEvent.title : 'Select an event';
     let activeTab = appState.adminTab || 'roles';
-    if (activeTab === 'stations') activeTab = 'roles';
 
     const tabs = [
         { id: 'roles', label: 'Roles' },
+        { id: 'stations', label: 'Stations' },
         { id: 'user', label: 'User Access' },
         { id: 'signed', label: 'Signed In' },
         { id: 'uploads', label: 'Upload Data' },
@@ -1211,11 +1211,25 @@ function renderAdminPanel() {
             <div class="resource-details" id="allergiesUploadMessage"></div>
         </div>
     `;
+    const stationsSection = `
+        <div class="card" style="max-width: 860px; width: 100%; margin-bottom: 16px;">
+            <div class="flex-between" style="align-items:center; gap: 12px;">
+                <div class="form-label">Inprocessing Stations</div>
+                <button class="btn btn-blue btn-small" onclick="openStationModal()">+ Add Station</button>
+            </div>
+            <div id="adminStationsList" class="resource-list" style="margin-top: 12px;">
+                <div class="empty-state-text text-center">Loading stations...</div>
+            </div>
+        </div>
+    `;
 
     let body = '';
     switch (activeTab) {
         case 'roles':
             body = rolesSection;
+            break;
+        case 'stations':
+            body = stationsSection;
             break;
         case 'user':
             body = userAccessSection;
